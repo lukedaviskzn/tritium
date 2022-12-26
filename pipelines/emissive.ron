@@ -1,0 +1,21 @@
+ShaderResource (
+    name: "emissive",
+    inputs: [
+        Node (
+            layout: Uniform,
+            bind_group: "transform",
+        ),
+        Global (
+            layout: Uniform,
+            resource: "current_camera",
+            bind_group: "camera",
+        ),
+        Global (
+            layout: Uniform,
+            resource: "current_light",
+            bind_group: "light",
+        ),
+    ],
+    vertex_type: Model,
+    shader_file: "emissive.wgsl",
+)

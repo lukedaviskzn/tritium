@@ -1,0 +1,20 @@
+ShaderResource (
+    name: "main",
+    inputs: [
+        Node (
+            layout: CubeMap,
+            bind_group: "cubemap",
+        ),
+        Node (
+            layout: Uniform,
+            bind_group: "transform",
+        ),
+        Global (
+            layout: Uniform,
+            resource: "current_camera",
+            bind_group: "camera",
+        ),
+    ],
+    vertex_type: Position,
+    shader_file: "skybox.wgsl",
+)
