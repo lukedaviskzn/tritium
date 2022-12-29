@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, any::TypeId};
 
 use winit::window::Window;
 
@@ -12,13 +12,13 @@ pub use window::*;
 pub use uniform::*;
 pub use vertex::*;
 
-use crate::{resource::{Material, Handle, Texture, CubeMap, Resources}, world::NodeDescriptor};
+use crate::{resource::{Material, Handle, Texture, CubeMap, Resources, Mesh}, node::{NodeDescriptor, Node, Component}, util::AsAny};
 
 pub struct Renderer {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) window: WindowAdapter,
-    pub(crate) bind_group_layouts: HashMap<BindGroupLayoutType, wgpu::BindGroupLayout>,
+    // pub(crate) bind_group_layouts: HashMap<BindGroupLayoutType, wgpu::BindGroupLayout>,
     // pub(crate) vertex_layouts: HashMap<VertexLayoutType, wgpu::VertexBufferLayout<'a>>,
 }
 
@@ -63,25 +63,29 @@ impl Renderer {
             vsync,
         };
 
-        let bind_group_layouts = {
-            let material_bind_group_layout = device.create_bind_group_layout(&Material::bind_group_layout_descriptor());
-            let uniform_bind_group_layout = device.create_bind_group_layout(&Uniform::<()>::bind_group_layout_descriptor());
-            let texture_bind_group_layout = device.create_bind_group_layout(&Texture::bind_group_layout_descriptor());
-            let cubemap_bind_group_layout = device.create_bind_group_layout(&CubeMap::bind_group_layout_descriptor());
+        // let bind_group_layouts = {
+        //     let material = device.create_bind_group_layout(&Material::bind_group_layout_descriptor());
+        //     let texture = device.create_bind_group_layout(&Texture::bind_group_layout_descriptor());
+        //     let cubemap = device.create_bind_group_layout(&CubeMap::bind_group_layout_descriptor());
+        //     let uniform = device.create_bind_group_layout(&Uniform::<()>::bind_group_layout_descriptor());
+        //     let storage = device.create_bind_group_layout(&StorageBuffer::<()>::bind_group_layout_descriptor());
+        //     let storage_array = device.create_bind_group_layout(&StorageBuffer::<()>::array_bind_group_layout_descriptor());
             
-            hashmap!{
-                BindGroupLayoutType::Material => material_bind_group_layout,
-                BindGroupLayoutType::Uniform => uniform_bind_group_layout,
-                BindGroupLayoutType::Texture => texture_bind_group_layout,
-                BindGroupLayoutType::CubeMap => cubemap_bind_group_layout,
-            }
-        };
+        //     hashmap!{
+        //         BindGroupLayoutType::Material => material,
+        //         BindGroupLayoutType::Texture => texture,
+        //         BindGroupLayoutType::CubeMap => cubemap,
+        //         BindGroupLayoutType::Uniform => uniform,
+        //         BindGroupLayoutType::Storage => storage,
+        //         BindGroupLayoutType::StorageArray => storage_array,
+        //     }
+        // };
 
         Renderer {
             device,
             queue,
             window,
-            bind_group_layouts,
+            // bind_group_layouts,
             // vertex_layouts,
         }
     }
@@ -99,7 +103,8 @@ pub struct QueuedRenderObject {
     pub shader: Handle<Shader>,
     pub(crate) vertex_buffer: Handle<wgpu::Buffer>,
     pub(crate) index_buffer: Handle<wgpu::Buffer>,
-    pub(crate) bind_groups: Vec<Handle<wgpu::BindGroup>>,
+    // pub(crate) bind_groups: Vec<Handle<wgpu::BindGroup>>,
+    pub(crate) bind_group: wgpu::BindGroup,
     pub num_indices: u32,
 }
 
@@ -117,16 +122,38 @@ pub struct QueuedRenderObject {
 //     }
 // }
 
-#[derive(Debug, Clone)]
+// #[derive(Debug, Clone)]
 pub enum RenderInput {
     Shader(Handle<Shader>),
     Mesh {
         vertex_buffer: Handle<wgpu::Buffer>,
         index_buffer: Handle<wgpu::Buffer>,
-        material: Option<Handle<wgpu::BindGroup>>,
+        material: Option<Handle<Material>>,
         num_elements: u32,
     },
-    BindGroup(String, Handle<wgpu::BindGroup>),
+    // BindGroup(String, Handle<wgpu::BindGroup>),
+    SceneInput(String, SceneInputItem),
+
+    BindingResources(String, BindingHolder),
+
+    // Buffer(String, UniformBuffer),
+    // StorageBuffer(String, StorageBuffer),
+    // Texture(String, Handle<wgpu::TextureView>, Handle<wgpu::Sampler>),
+}
+
+#[derive(Debug, Clone)]
+pub struct SceneInputItem {
+    pub(crate) data: Vec<u8>,
+    pub(crate) typeid: TypeId,
+}
+
+impl SceneInputItem {
+    pub fn new<T: bytemuck::Pod + bytemuck::Zeroable>(value: T) -> SceneInputItem {
+        SceneInputItem {
+            data: bytemuck::cast_slice(&[value]).to_vec(),
+            typeid: TypeId::of::<T>(),
+        }
+    }
 }
 
 pub trait Renderable {
@@ -136,3 +163,14 @@ pub trait Renderable {
 pub trait RenderableResource {
     fn render_inputs(&self, node: &NodeDescriptor, renderer: &Renderer, resources: &Resources) -> Vec<RenderInput>;
 }
+
+/// Invisible components and their chilcren cannot be accessed at all in the extraction and render stages. For example, one cannot 
+/// set 'current_camera' to an invisible camera, or camera with an invisible parent.
+pub struct Invisible;
+
+impl AsAny for Invisible {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+}
+
+impl Component for Invisible {}

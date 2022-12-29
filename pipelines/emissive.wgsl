@@ -1,7 +1,11 @@
 // Vertex Shader
 
+struct Transform {
+    model_matrix: mat4x4<f32>,
+    inv_model_matrix: mat4x4<f32>,
+}
 @group(0) @binding(0)
-var<uniform> model_matrix: mat4x4<f32>;
+var<uniform> transform: Transform;
 
 struct CameraUniform {
     view_pos: vec4<f32>,
@@ -12,7 +16,7 @@ var<uniform> camera: CameraUniform;
 
 struct Light {
     position: vec3<f32>,
-    color: vec3<f32>,
+    colour: vec4<f32>,
 }
 @group(2) @binding(0)
 var<uniform> light: Light;
@@ -23,7 +27,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec3<f32>,
+    @location(0) colour: vec3<f32>,
 };
 
 @vertex
@@ -31,8 +35,8 @@ fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * model_matrix * vec4(model.position, 1.0);
-    out.color = light.color;
+    out.clip_position = camera.view_proj * transform.model_matrix * vec4(model.position, 1.0);
+    out.colour = light.colour.rgb * light.colour.a;
     return out;
 }
 
@@ -40,5 +44,5 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0);
+    return vec4<f32>(in.colour, 1.0);
 }

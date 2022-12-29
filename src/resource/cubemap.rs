@@ -1,14 +1,14 @@
 use image::GenericImageView;
 
-use crate::{renderer::{BindGroupLayoutType, Renderer, RenderInput, RenderableResource}, world::NodeDescriptor};
+use crate::{renderer::{Renderer, RenderInput, RenderableResource, BindingHolder}, node::NodeDescriptor};
 
-use super::{Handle, Resources};
+use super::{Resources, Handle};
 
 pub struct CubeMap {
     pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
-    bind_group: Handle<wgpu::BindGroup>,
+    pub view: Handle<wgpu::TextureView>,
+    pub sampler: Handle<wgpu::Sampler>,
+    // bind_group: Handle<wgpu::BindGroup>,
 }
 
 impl CubeMap {
@@ -164,6 +164,7 @@ impl CubeMap {
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
+
         let sampler = renderer.device.create_sampler(
             &wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -176,63 +177,89 @@ impl CubeMap {
             }
         );
 
-        let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label,
-            layout: &renderer.bind_group_layouts[&BindGroupLayoutType::CubeMap],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        }));
+        let view = resources.store(view);
+        let sampler = resources.store(sampler);
+
+        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label,
+        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::CubeMap],
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(&sampler),
+        //         },
+        //     ],
+        // }));
         
         Ok(CubeMap {
             texture,
             view,
             sampler,
-            bind_group,
+            // bind_group,
         })
     }
 
-    pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
-        self.bind_group.clone()
+    // pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
+    //     self.bind_group.clone()
+    // }
+
+    // pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
+    //     wgpu::BindGroupLayoutDescriptor {
+    //         entries: &[
+    //             // Diffuse Texture
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 0,
+    //                 visibility: wgpu::ShaderStages::FRAGMENT,
+    //                 ty: wgpu::BindingType::Texture {
+    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
+    //                     view_dimension: wgpu::TextureViewDimension::Cube,
+    //                     multisampled: false,
+    //                 },
+    //                 count: None,
+    //             },
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 1,
+    //                 visibility: wgpu::ShaderStages::FRAGMENT,
+    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+    //                 count: None,
+    //             },
+    //         ],
+    //         label: None,
+    //     }
+    // }
+
+    pub(crate) fn binding_types() -> Vec<wgpu::BindingType> {
+        vec![
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::Cube,
+                multisampled: false,
+            },
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        ]
     }
 
-    pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
-        wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                // Diffuse Texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-            label: None,
-        }
+    pub(crate) fn binding_resource(&self) -> BindingHolder {
+        BindingHolder::Texture(self.view.clone(), self.sampler.clone())
     }
 }
 
 impl RenderableResource for CubeMap {
     fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, _resources: &Resources) -> Vec<RenderInput> {
         // vec![RenderInput::new("cubemap", RenderInputStorage::BindGroup(self.bind_group()))]
-        vec![RenderInput::BindGroup("cubemap".into(), self.bind_group())]
+        // vec![RenderInput::BindGroup("cubemap".into(), self.bind_group())]
+        // vec![RenderInput::Texture("cubemap".into(), self.view.clone(), self.sampler.clone())]
+
+        // let generator = TextureBindingGenerator {
+        //     view: self.view,
+        //     sampler: self.sampler,
+        // };
+
+        vec![RenderInput::BindingResources("cubemap".into(), self.binding_resource())]
     }
 }
 

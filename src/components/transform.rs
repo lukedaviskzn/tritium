@@ -1,6 +1,4 @@
-use crate::{util::AsAny, engine::{EngineScript, UpdateContext}, resource::Resources, world::Node, renderer::{Renderable, RenderInput, Uniform, Renderer}};
-
-use super::{Component, NodeDescriptor};
+use crate::{util::AsAny, engine::UpdateContext, resource::Resources, node::{Node, Component, NodeDescriptor, NodeScript}, renderer::{Renderable, RenderInput, Renderer, UniformBuffer}};
 
 #[derive(Debug)]
 pub struct Transform {
@@ -77,20 +75,20 @@ impl AsAny for Transform {
 }
 
 impl Component for Transform {
-    fn as_renderable(&self) -> Option<&dyn Renderable> {
-        Some(self)
-    }
+    fn as_renderable(&self) -> Option<&dyn Renderable> { Some(self) }
 }
 
 impl Renderable for Transform {
     fn render_inputs(&self, _node: &NodeDescriptor, renderer: &Renderer, resources: &mut Resources) -> Vec<RenderInput> {
-        let uniform = Uniform::new(
+        let uniform = UniformBuffer::from_value(
             renderer, resources,
             TransformUniform::new(self),
         );
-        
+
         // vec![RenderInput::new("transform", RenderInputStorage::BindGroup(uniform.bind_group()))]
-        vec![RenderInput::BindGroup("transform".into(), uniform.bind_group())]
+        // vec![RenderInput::BindGroup("transform".into(), uniform)]
+        // vec![RenderInput::UniformBuffer("transform".into(), uniform)]
+        vec![RenderInput::BindingResources("transform".into(), uniform.binding_resource())]
     }
 }
 
@@ -103,17 +101,20 @@ pub trait HasTransform {
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TransformUniform {
     model_matrix: [[f32; 4]; 4],
+    inv_model_matrix: [[f32; 4]; 4],
 }
 
 impl TransformUniform {
     pub fn new(transform: &Transform) -> TransformUniform {
         TransformUniform {
             model_matrix: transform.global_matrix.to_cols_array_2d(),
+            inv_model_matrix: transform.global_matrix.inverse().to_cols_array_2d(),
         }
     }
 
     pub fn update(&mut self, transform: &Transform) {
         self.model_matrix = transform.global_matrix.to_cols_array_2d();
+        self.inv_model_matrix = transform.global_matrix.inverse().to_cols_array_2d();
     }
 }
 
@@ -141,7 +142,7 @@ impl TransformPropagationScript {
     }
 }
 
-impl EngineScript for TransformPropagationScript {
+impl NodeScript for TransformPropagationScript {
     fn post_update(&mut self, node: &mut NodeDescriptor, _context: &UpdateContext, _resources: &mut Resources) {
         self.update_transforms(node);
     }

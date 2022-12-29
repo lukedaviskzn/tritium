@@ -1,12 +1,10 @@
 use std::{collections::HashMap, any::TypeId};
 
-use crate::{util::{Uid, AsAny}, engine::EngineScript, renderer::Renderable};
+use crate::{util::{Uid, AsAny}, renderer::Renderable};
 
-mod transform;
-mod light;
+mod script;
 
-pub use transform::*;
-pub use light::*;
+pub use script::*;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct NodeId(Uid);
@@ -59,11 +57,15 @@ impl NodeDescriptor {
 
 pub struct Node {
     pub desc: NodeDescriptor,
-    pub scripts: Vec<Box<dyn EngineScript>>,
+    pub scripts: Vec<Box<dyn NodeScript>>,
 }
 
 impl Node {
-    pub fn new(name: &str, children: Vec<Node>) -> Node {
+    pub fn builder(name: &str) -> NodeBuilder {
+        NodeBuilder::new(name)
+    }
+
+    fn new(name: &str, children: Vec<Node>) -> Node {
         Node {
             desc: NodeDescriptor {
                 node_id: NodeId(Uid::new()),
@@ -79,7 +81,7 @@ impl Node {
         self.desc.node_id
     }
 
-    pub fn add_script<S: EngineScript + 'static>(&mut self, script: S) {
+    pub fn add_script<S: NodeScript + 'static>(&mut self, script: S) {
         self.scripts.push(Box::new(script));
     }
 
@@ -236,7 +238,7 @@ pub struct NodeBuilder {
 }
 
 impl NodeBuilder {
-    pub fn new(name: &str) -> NodeBuilder {
+    fn new(name: &str) -> NodeBuilder {
         NodeBuilder {
             node: Node::new(name, vec![]),
         }
@@ -248,7 +250,7 @@ impl NodeBuilder {
         }
     }
 
-    // pub fn with_script<S: EngineScript + 'static>(name: &str, script: S) -> NodeBuilder {
+    // pub fn with_script<S: NodeScript + 'static>(name: &str, script: S) -> NodeBuilder {
     //     NodeBuilder {
     //         node: Node::new(name, script, vec![]),
     //     }
@@ -259,7 +261,7 @@ impl NodeBuilder {
         self
     }
 
-    pub fn add_script<S: EngineScript + 'static>(mut self, script: S) -> NodeBuilder {
+    pub fn add_script<S: NodeScript + 'static>(mut self, script: S) -> NodeBuilder {
         self.node.add_script(script);
         self
     }

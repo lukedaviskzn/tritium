@@ -296,7 +296,7 @@ pub fn load_obj<P: AsRef<Path>>(
         } else {
             Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], Some(&format!("{} diffuse pixel texture", material.name)), true)
         };
-        let diffuse_texture = &resources.store(diffuse_texture);
+        let diffuse_texture = resources.store(diffuse_texture);
 
         let diffuse_colour = Rgba::new(material.diffuse[0], material.diffuse[1], material.diffuse[2], 1.0);
 
@@ -305,7 +305,7 @@ pub fn load_obj<P: AsRef<Path>>(
         } else {
             Texture::from_pixel(renderer, resources, &[128, 128, 255, 255], Some(&format!("{} normal pixel texture", material.name)), false)
         };
-        let normal_texture = &resources.store(normal_texture);
+        let normal_texture = resources.store(normal_texture);
 
         let normal_factor = 1.0;
 
@@ -313,9 +313,9 @@ pub fn load_obj<P: AsRef<Path>>(
             &renderer,
             resources,
             &material.name,
-            diffuse_texture,
+            Some(diffuse_texture),
             diffuse_colour,
-            normal_texture,
+            Some(normal_texture),
             normal_factor,
         );
 
@@ -381,11 +381,11 @@ pub fn load_obj<P: AsRef<Path>>(
                     (tangent + glam::Vec3::from(vertices[c[1] as usize].tangent)).into();
                 vertices[c[2] as usize].tangent = 
                     (tangent + glam::Vec3::from(vertices[c[2] as usize].tangent)).into();
-                vertices[c[0] as usize].tangent = 
+                vertices[c[0] as usize].bitangent = 
                     (bitangent + glam::Vec3::from(vertices[c[0] as usize].bitangent)).into();
-                vertices[c[1] as usize].tangent = 
+                vertices[c[1] as usize].bitangent = 
                     (bitangent + glam::Vec3::from(vertices[c[1] as usize].bitangent)).into();
-                vertices[c[2] as usize].tangent = 
+                vertices[c[2] as usize].bitangent = 
                     (bitangent + glam::Vec3::from(vertices[c[2] as usize].bitangent)).into();
                 
                 // Used to average tangents/bitangents for vertices that touch multiple triangles.

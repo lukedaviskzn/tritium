@@ -1,6 +1,6 @@
 use std::{sync::Arc, marker::PhantomData, hash::Hash, any::Any};
 
-use crate::{util::{Uid, AsAny}, world::{Component, NodeDescriptor}, renderer::{Renderable, RenderInput, Renderer, RenderableResource, Shader}};
+use crate::{util::{Uid, AsAny}, node::{Component, NodeDescriptor}, renderer::{Renderable, RenderInput, Renderer, RenderableResource, Shader}};
 
 use super::Resources;
 

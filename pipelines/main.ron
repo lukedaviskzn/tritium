@@ -11,11 +11,13 @@ ShaderResource (
             resource: "current_camera",
             bind_group: "camera",
         ),
-        Global (
-            layout: Uniform,
-            resource: "current_light",
-            bind_group: "light",
+        Scene (
+            collection: "point_lights",
         ),
+        Scene (
+            collection: "directional_lights",
+        ),
+        
     ],
     vertex_type: Model,
     shader_file: "main.wgsl",

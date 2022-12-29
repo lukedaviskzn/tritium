@@ -1,11 +1,12 @@
-use crate::resource;
+use crate::resource::{self, Texture};
 
 pub struct WindowAdapter {
     pub(crate) window: winit::window::Window,
     pub(crate) surface: wgpu::Surface,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) size: winit::dpi::PhysicalSize<u32>,
-    pub(crate) depth_texture: resource::Texture,
+    // pub(crate) depth_texture: resource::Texture,
+    pub(crate) depth_texture: wgpu::TextureView,
     pub(crate) vsync: bool,
     pub(crate) focused: bool,
 }
@@ -19,7 +20,7 @@ impl WindowAdapter {
             self.config.present_mode = if self.vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
             self.surface.configure(device, &self.config);
 
-            self.depth_texture = crate::resource::Texture::create_depth_texture(device, &self.config, "Depth Texture");
+            self.depth_texture = Texture::create_depth_texture(device, &self.config, "Depth Texture");
         }
     }
     

@@ -13,7 +13,7 @@ ShaderResource (
         Global (
             layout: Uniform,
             resource: "current_light",
-            bind_group: "light",
+            bind_group: "point_light",
         ),
     ],
     vertex_type: Model,

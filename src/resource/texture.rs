@@ -1,20 +1,20 @@
 use image::GenericImageView;
 
-use crate::renderer::{BindGroupLayoutType, Renderer};
+use crate::renderer::{Renderer, BindingHolder};
 
 use super::{Handle, Resources};
 
 pub struct Texture {
     pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
-    bind_group: Handle<wgpu::BindGroup>,
+    pub view: Handle<wgpu::TextureView>,
+    pub sampler: Handle<wgpu::Sampler>,
+    // bind_group: Handle<wgpu::BindGroup>,
 }
 
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    pub(crate) fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, label: &str) -> Texture {
+    pub(crate) fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, label: &str) -> wgpu::TextureView {
         let size = wgpu::Extent3d {
             width: config.width,
             height: config.height,
@@ -32,25 +32,24 @@ impl Texture {
         let texture = device.create_texture(&desc);
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            lod_min_clamp: -100.0,
-            lod_max_clamp: 100.0,
-            ..Default::default()
-        });
+        
+        // let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        //     address_mode_u: wgpu::AddressMode::ClampToEdge,
+        //     address_mode_v: wgpu::AddressMode::ClampToEdge,
+        //     address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //     mag_filter: wgpu::FilterMode::Linear,
+        //     min_filter: wgpu::FilterMode::Linear,
+        //     mipmap_filter: wgpu::FilterMode::Nearest,
+        //     compare: Some(wgpu::CompareFunction::LessEqual),
+        //     lod_min_clamp: -100.0,
+        //     lod_max_clamp: 100.0,
+        //     ..Default::default()
+        // });
 
-        Texture {
-            texture,
-            view,
-            sampler,
-            bind_group: Handle::new_invalid(), // handle never used
-        }
+        // let view = resources.store(view);
+        // let sampler = resources.store(sampler);
+
+        view
     }
 
     pub fn from_bytes(
@@ -145,8 +144,8 @@ impl Texture {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = renderer.device.create_sampler(
             &wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_u: wgpu::AddressMode::Repeat,
+                address_mode_v: wgpu::AddressMode::Repeat,
                 address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Nearest,
@@ -155,26 +154,29 @@ impl Texture {
             }
         );
 
-        let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label,
-            layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        }));
+        let view = resources.store(view);
+        let sampler = resources.store(sampler);
+
+        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label,
+        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(&sampler),
+        //         },
+        //     ],
+        // }));
         
         Texture {
             texture,
             view,
             sampler,
-            bind_group,
+            // bind_group,
         }
     }
 
@@ -241,55 +243,73 @@ impl Texture {
             }
         );
 
-        let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label,
-            layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        }));
+        let view = resources.store(view);
+        let sampler = resources.store(sampler);
+
+        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label,
+        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::TextureView(&view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Sampler(&sampler),
+        //         },
+        //     ],
+        // }));
         
         Texture {
             texture,
             view,
             sampler,
-            bind_group,
+            // bind_group,
         }
     }
 
-    pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
-        self.bind_group.clone()
+    // pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
+    //     self.bind_group.clone()
+    // }
+
+    // pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
+    //     wgpu::BindGroupLayoutDescriptor {
+    //         entries: &[
+    //             // Diffuse Texture
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 0,
+    //                 visibility: wgpu::ShaderStages::FRAGMENT,
+    //                 ty: wgpu::BindingType::Texture {
+    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
+    //                     view_dimension: wgpu::TextureViewDimension::D2,
+    //                     multisampled: false,
+    //                 },
+    //                 count: None,
+    //             },
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 1,
+    //                 visibility: wgpu::ShaderStages::FRAGMENT,
+    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+    //                 count: None,
+    //             },
+    //         ],
+    //         label: None,
+    //     }
+    // }
+
+    pub(crate) fn binding_types() -> Vec<wgpu::BindingType> {
+        vec![
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        ]
     }
 
-    pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
-        wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                // Diffuse Texture
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-            label: None,
-        }
+    pub(crate) fn binding_resource(&self) -> BindingHolder {
+        BindingHolder::Texture(self.view.clone(), self.sampler.clone())
     }
 }

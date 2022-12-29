@@ -1,12 +1,13 @@
 use std::path::Path;
 
-use crate::{resource::Texture};
+use crate::{resource::{Texture, CubeMap, Material, Resources, Handle}};
 
-use super::{Renderer, VertexLayoutType, PositionVertex, Vertex, ModelVertex};
+use super::{Renderer, VertexLayoutType, PositionVertex, Vertex, ModelVertex, UniformBuffer, StorageBuffer};
 
 pub struct Shader {
     pub(crate) pipeline: wgpu::RenderPipeline,
     pub(crate) inputs: Vec<ShaderInput>,
+    pub(crate) bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Shader {
@@ -25,20 +26,47 @@ impl Shader {
     ) -> Shader {
         let shader = renderer.device.create_shader_module(shader);
 
-        let mut bind_group_layout_order = vec![];
+        let bind_group_layout_entries = {
+            let mut bind_group_layout_entries = vec![];
+            let mut current_binding = 0;
+            
+            for input in &shader_inputs {
+                let binding_types = match input.layout() {
+                    BufferBindingType::Material => Material::binding_types(),
+                    BufferBindingType::Texture => Texture::binding_types(),
+                    BufferBindingType::CubeMap => CubeMap::binding_types(),
+                    BufferBindingType::Uniform => vec![UniformBuffer::binding_type()],
+                    BufferBindingType::Storage => StorageBuffer::binding_types(),
+                };
+                
+                for binding_type in binding_types {
+                    bind_group_layout_entries.push(wgpu::BindGroupLayoutEntry {
+                        binding: current_binding,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: binding_type,
+                        count: None,
+                    });
 
-        for input in &shader_inputs {
-            bind_group_layout_order.push(&renderer.bind_group_layouts[&input.layout()]);
-        }
+                    current_binding += 1;
+                }
+            }
+
+            bind_group_layout_entries
+        };
+
+        let bind_group_layout = renderer.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(&format!("'{name}': bind group layout")),
+            entries: bind_group_layout_entries.as_slice(),
+        });
 
         let layout = renderer.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(name),
-            bind_group_layouts: &bind_group_layout_order,
+            label: Some(&format!("'{name}': pipeline layout")),
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
     
         let pipeline = renderer.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
+            label: Some(&format!("'{name}': render pipeline")),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -92,6 +120,7 @@ impl Shader {
         Shader {
             pipeline,
             inputs: shader_inputs,
+            bind_group_layout,
         }
     }
 
@@ -141,11 +170,12 @@ pub struct ShaderResource {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum BindGroupLayoutType {
-    Material,
-    Uniform,
-    Texture,
-    CubeMap,
+pub enum BufferBindingType {
+    Material, // many bindings, see material
+    Texture, // 0: texture, 1: sampler
+    CubeMap, // 0: cubemap, 1: sampler
+    Uniform, // any type
+    Storage, // { len: u32, data: array<T> }
 }
 
 // #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -159,22 +189,28 @@ pub enum BindGroupLayoutType {
 pub(crate) enum ShaderInput {
     MeshMaterial,
     Node {
-        layout: BindGroupLayoutType,
+        layout: BufferBindingType,
         bind_group: String,
     },
     Global {
-        layout: BindGroupLayoutType,
+        layout: BufferBindingType,
         resource: String,
         bind_group: String,
+    },
+    Scene {
+        // layout: BindGroupLayoutType,
+        collection: String,
     },
 }
 
 impl ShaderInput {
-    pub fn layout(&self) -> BindGroupLayoutType {
+    pub fn layout(&self) -> BufferBindingType {
         match self {
-            ShaderInput::MeshMaterial => BindGroupLayoutType::Material,
+            ShaderInput::MeshMaterial => BufferBindingType::Material,
             ShaderInput::Node { layout, .. } => *layout,
             ShaderInput::Global { layout, .. } => *layout,
+            ShaderInput::Scene { .. } => BufferBindingType::Storage,
+            // ShaderInput::Scene { layout, .. } => *layout,
         }
     }
 }
@@ -195,3 +231,13 @@ impl std::fmt::Display for ShaderLoadError {
 }
 
 impl std::error::Error for ShaderLoadError {}
+
+// pub(crate) trait BindingGenerator {
+//     fn binding_resources(&self, renderer: &Renderer, resources: &mut Resources) -> Vec<wgpu::BindingResource>;
+// }
+
+#[derive(Debug, Clone)]
+pub enum BindingHolder {
+    Buffer(Handle<wgpu::Buffer>),
+    Texture(Handle<wgpu::TextureView>, Handle<wgpu::Sampler>),
+}
