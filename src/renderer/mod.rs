@@ -29,7 +29,7 @@ impl Renderer {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
+            power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }).await.unwrap();
@@ -63,24 +63,6 @@ impl Renderer {
             vsync,
         };
 
-        // let bind_group_layouts = {
-        //     let material = device.create_bind_group_layout(&Material::bind_group_layout_descriptor());
-        //     let texture = device.create_bind_group_layout(&Texture::bind_group_layout_descriptor());
-        //     let cubemap = device.create_bind_group_layout(&CubeMap::bind_group_layout_descriptor());
-        //     let uniform = device.create_bind_group_layout(&Uniform::<()>::bind_group_layout_descriptor());
-        //     let storage = device.create_bind_group_layout(&StorageBuffer::<()>::bind_group_layout_descriptor());
-        //     let storage_array = device.create_bind_group_layout(&StorageBuffer::<()>::array_bind_group_layout_descriptor());
-            
-        //     hashmap!{
-        //         BindGroupLayoutType::Material => material,
-        //         BindGroupLayoutType::Texture => texture,
-        //         BindGroupLayoutType::CubeMap => cubemap,
-        //         BindGroupLayoutType::Uniform => uniform,
-        //         BindGroupLayoutType::Storage => storage,
-        //         BindGroupLayoutType::StorageArray => storage_array,
-        //     }
-        // };
-
         Renderer {
             device,
             queue,
@@ -99,28 +81,18 @@ impl Renderer {
     }
 }
 
-pub struct QueuedRenderObject {
-    pub shader: Handle<Shader>,
-    pub(crate) vertex_buffer: Handle<wgpu::Buffer>,
-    pub(crate) index_buffer: Handle<wgpu::Buffer>,
-    // pub(crate) bind_groups: Vec<Handle<wgpu::BindGroup>>,
-    pub(crate) bind_group: wgpu::BindGroup,
-    pub num_indices: u32,
+pub trait RenderTarget {
+    fn view(&self) -> Handle<wgpu::TextureView>;
 }
 
-// pub struct RenderInput {
-//     pub(crate) name: String,
-//     pub(crate) storage: RenderInputStorage,
-// }
-
-// impl RenderInput {
-//     pub fn new(name: &str, storage: RenderInputStorage) -> RenderInput {
-//         RenderInput {
-//             name: name.into(),
-//             storage,
-//         }
-//     }
-// }
+pub(crate) struct QueuedRenderObject {
+    pub shader: Handle<Shader>,
+    // pub target: Handle<Box<dyn RenderTarget>>,
+    pub vertex_buffer: Handle<wgpu::Buffer>,
+    pub index_buffer: Handle<wgpu::Buffer>,
+    pub bind_group: wgpu::BindGroup,
+    pub num_indices: u32,
+}
 
 // #[derive(Debug, Clone)]
 pub enum RenderInput {
@@ -131,14 +103,8 @@ pub enum RenderInput {
         material: Option<Handle<Material>>,
         num_elements: u32,
     },
-    // BindGroup(String, Handle<wgpu::BindGroup>),
-    SceneInput(String, SceneInputItem),
-
     BindingResources(String, BindingHolder),
-
-    // Buffer(String, UniformBuffer),
-    // StorageBuffer(String, StorageBuffer),
-    // Texture(String, Handle<wgpu::TextureView>, Handle<wgpu::Sampler>),
+    SceneInput(String, SceneInputItem),
 }
 
 #[derive(Debug, Clone)]

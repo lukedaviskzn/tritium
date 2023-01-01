@@ -1,6 +1,7 @@
 use std::io::BufReader;
 
-use tritium::{renderer::{Shader, PositionVertex}, resource::{self, Model, Mesh, CubeMap, Cube, Material, Texture}, node::{Node, ClosureScript}, camera::Camera, engine::Rgba, components::{Transform, PointLight, DirectionalLight}};
+use image::GenericImageView;
+use tritium::{renderer::Shader, resource::{self, Model, CubeMap, Texture, Material, Handle}, node::{Node, ClosureScript}, camera::Camera, engine::Rgba, components::{Transform, PointLight, DirectionalLight, AmbientLight}};
 use winit::event::VirtualKeyCode;
 
 #[tokio::main]
@@ -29,28 +30,104 @@ async fn main() {
 
         // Resources
 
-        let model = {
-            let model = resource::load_obj(
-                renderer,
-                resources,
-                "res/sponza/sponza.obj",
-                // "res/cube.obj",
-            ).unwrap();
+        // let model = {
+        //     let model = resource::load_obj(
+        //         renderer,
+        //         resources,
+        //         "res/sponza/sponza.obj",
+        //         // "res/cube.obj",
+        //     ).unwrap();
             
-            // let material = Material::new(renderer, resources, "plane_material", None, Rgba::WHITE, None, 1.0);
-            // let material = resources.store(material);
+        //     // let material = Material::new(renderer, resources, "plane_material", None, Rgba::WHITE, None, 1.0);
+        //     // let material = resources.store(material);
             
-            // let model = Model::new_plane(renderer, resources, Some(material));
+        //     // let model = Model::new_plane(renderer, resources, Some(material));
             
-            resources.store(model)
+        //     resources.store(model)
+        // };
+
+        // let scene_node = {
+        //     let mut node = resource::load_gltf(renderer, resources, "res/sponza_gltf/Sponza.gltf", Some(0)).unwrap();
+            
+        //     node.traverse_if_mut(&mut |node| node.has_component::<Handle<Model>>(), &mut |node| {
+        //         node.add_component(main_render_pipeline.clone());
+        //     });
+            
+        //     node
+        // };
+
+        let scene_node = {
+            let albedo_image = image::load(BufReader::new(std::fs::File::open("res/materials/dirt-red-bricks/dirty-red-bricks_albedo.png").unwrap()), image::ImageFormat::Png).unwrap();
+            let normal_image = image::load(BufReader::new(std::fs::File::open("res/materials/dirt-red-bricks/dirty-red-bricks_normal-ogl.png").unwrap()), image::ImageFormat::Png).unwrap();
+            let metallic_image = image::load(BufReader::new(std::fs::File::open("res/materials/dirt-red-bricks/dirty-red-bricks_metallic.png").unwrap()), image::ImageFormat::Png).unwrap();
+            let roughness_image = image::load(BufReader::new(std::fs::File::open("res/materials/dirt-red-bricks/dirty-red-bricks_roughness.png").unwrap()), image::ImageFormat::Png).unwrap();
+            let occlusion_image = image::load(BufReader::new(std::fs::File::open("res/materials/dirt-red-bricks/dirty-red-bricks_ao.png").unwrap()), image::ImageFormat::Png).unwrap();
+
+            let (metallic_roughness_bytes, size) = {
+                let size = metallic_image.dimensions();
+                let metallic_image = metallic_image.to_rgba8();
+                let roughness_image = roughness_image.to_rgba8();
+                
+                let metallic_bytes = metallic_image.as_raw();
+                let roughness_bytes = roughness_image.as_raw();
+                let mut bytes = vec![0; metallic_bytes.len()];
+                for i in 0..(metallic_bytes.len() / 4) {
+                    let index = i * 4;
+                    bytes[index + 1] = roughness_bytes[index + 1];
+                    bytes[index + 2] = metallic_bytes[index + 2];
+                    bytes[index + 3] = 255;
+                }
+                (bytes, size)
+            };
+
+            log::trace!("{:?} {:?}", metallic_roughness_bytes.len(), size);
+
+            let metallic_roughness_image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(size.0, size.1, metallic_roughness_bytes).unwrap());
+
+            let albedo_texture = Texture::from_image(renderer, resources, &albedo_image, None, false);
+            let normal_texture = Texture::from_image(renderer, resources, &normal_image, None, false);
+            let metallic_roughness_texture = Texture::from_image(renderer, resources, &metallic_roughness_image, None, false);
+            let occlusion_texture = Texture::from_image(renderer, resources, &occlusion_image, None, false);
+
+            let albedo_texture = resources.store(albedo_texture);
+            let normal_texture = resources.store(normal_texture);
+            let metallic_roughness_texture = resources.store(metallic_roughness_texture);
+            let occlusion_texture = resources.store(occlusion_texture);
+
+            let material = Material::builder()
+                .albedo_texture(albedo_texture)
+                .normal_texture(normal_texture)
+                .metallic_roughness_texture(metallic_roughness_texture)
+                .occlusion_texture(occlusion_texture)
+                .build(renderer, resources);
+            let material = resources.store(material);
+            
+            let model = Model::new_sphere(renderer, resources, Some(material), 12);
+            let model = resources.store(model);
+
+            Node::builder("Model Node")
+            .add_component(Transform::IDENTITY)
+            .add_component(model)
+            .add_component(main_render_pipeline.clone())
+            .build()
         };
         
         let light_model = {
-            let model = resource::load_obj(
+            let mut model = resource::load_obj(
                  renderer,
                 resources,
                 "res/sphere.obj",
             ).unwrap();
+
+            // let material = Material::new(renderer, resources, Some("light_material"), false, resource::AlphaMode::Mask { cutoff: 0.1 }, None, Rgba::BLACK, None, 1.0, 0.5, None, 1.0, None, 1.0, None, Rgba::new(1.0, 0.9, 0.8, 1.0));
+            let material = Material::builder()
+                .name("light_material")
+                .albedo(Rgba::BLACK)
+                .emissive_factor(Rgba::new(1.0, 0.9, 0.8, 1.0))
+                .build(renderer, resources);
+            let material = resources.store(material);
+
+            model.meshes[0].material = Some(material);
             
             // let material = Material::new(renderer, resources, "light_material", None, Rgba::WHITE, None, 1.0);
             // let material = resources.store(material);
@@ -68,23 +145,37 @@ async fn main() {
         
         log::trace!("Loading Skybox");
         let skybox = {
-            let pos_x = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/px.png").unwrap()), image::ImageFormat::Png).unwrap();
-            let neg_x = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/nx.png").unwrap()), image::ImageFormat::Png).unwrap();
-            let pos_y = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/py.png").unwrap()), image::ImageFormat::Png).unwrap();
-            let neg_y = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/ny.png").unwrap()), image::ImageFormat::Png).unwrap();
-            let pos_z = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/pz.png").unwrap()), image::ImageFormat::Png).unwrap();
-            let neg_z = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/nz.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // From face images
+            // let pos_x = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/px.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // let neg_x = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/nx.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // let pos_y = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/py.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // let neg_y = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/ny.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // let pos_z = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/pz.png").unwrap()), image::ImageFormat::Png).unwrap();
+            // let neg_z = &image::load(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/nz.png").unwrap()), image::ImageFormat::Png).unwrap();
             
-            let source = Cube {
-                pos_x,
-                neg_x,
-                pos_y,
-                neg_y,
-                pos_z,
-                neg_z,
-            };
+            // let source = Cube {
+            //     pos_x,
+            //     neg_x,
+            //     pos_y,
+            //     neg_y,
+            //     pos_z,
+            //     neg_z,
+            // };
 
-            let cubemap = CubeMap::from_image(renderer, resources, source, None, false).unwrap();
+            // let cubemap = CubeMap::from_images(renderer, resources, source, None, false).unwrap();
+
+            // From equirectangular jpeg
+            // let image = image::load(BufReader::new(std::fs::File::open("res/skyboxes/milkyway/Milkyway_BG.jpg").unwrap()), image::ImageFormat::Jpeg).unwrap();
+            // let cubemap = CubeMap::from_equirectangular(renderer, resources, &image, None, true).unwrap();
+            
+            // From equirectangular hdr
+            let decoder = image::codecs::hdr::HdrDecoder::new(BufReader::new(std::fs::File::open("res/skyboxes/grand_canyon/equirectangular.hdr").unwrap())).unwrap();
+            let width = decoder.metadata().width;
+            let height = decoder.metadata().height;
+            let pixels = decoder.read_image_hdr().unwrap().iter().flat_map(|p| p.0).collect::<Vec<_>>();
+            let image = image::DynamicImage::ImageRgb32F(image::Rgb32FImage::from_vec(width, height, pixels).unwrap());
+
+            let cubemap = CubeMap::from_equirectangular(renderer, resources, &image, None, true).unwrap();
             
             resources.store(cubemap)
         };
@@ -99,11 +190,11 @@ async fn main() {
         //     ],
         // };
 
-        let light_origin_script = ClosureScript::builder()
-            .tick(|node, context, _| {
-                let transform = node.get_component_mut::<Transform>().unwrap();
-                transform.rotation *= glam::Quat::from_axis_angle(glam::Vec3::Y, -0.5 * context.delta_time);
-            }).build();
+        // let light_origin_script = ClosureScript::builder()
+        //     .tick(|node, context, _| {
+        //         let transform = node.get_component_mut::<Transform>().unwrap();
+        //         transform.rotation *= glam::Quat::from_axis_angle(glam::Vec3::Y, -0.5 * context.delta_time);
+        //     }).build();
 
         let camera_script = ClosureScript::builder()
             .tick(|node, context, resources| {
@@ -157,29 +248,31 @@ async fn main() {
             }).build();
 
         let current_scene = Node::builder("Current Scene")
+            // .add_child(
+            //     Node::builder("model")
+            //     .add_component(Transform::from_scale(glam::Vec3::splat(0.01)))
+            //     // .add_component(Transform::IDENTITY)
+            //     .add_component(model.clone())
+            //     .add_component(main_render_pipeline.clone())
+            //     .build()
+            // )
+            .add_child(scene_node)
             .add_child(
-                Node::builder("model")
-                .add_component(Transform::from_scale(glam::Vec3::splat(0.01)))
-                // .add_component(Transform::IDENTITY)
-                .add_component(model.clone())
-                .add_component(main_render_pipeline.clone())
+                Node::builder("sun")
+                .add_component(Transform::from_rotation(glam::Quat::from_axis_angle(glam::vec3(-2.0, 0.0, -1.0).normalize(), -std::f32::consts::PI / 2.9)))
+                .add_component(DirectionalLight::new(Rgba::new(1.0, 1.0, 1.0, 20.0)))
+                .add_component(AmbientLight::new(Rgba::new(1.0, 1.0, 1.0, 0.25)))
                 .build()
             )
             .add_child(
-                Node::builder("light_origin")
-                .add_child(
-                    Node::builder("sun")
-                    .add_component(Transform::from_rotation(glam::Quat::from_axis_angle(glam::vec3(-1.0, 0.0, -2.0).normalize(), std::f32::consts::FRAC_PI_4)))
-                    .add_component(DirectionalLight::new(Rgba::new(1.0, 1.0, 1.0, 1.0)))
-                    .build()
-                )
-                .add_component(Transform::IDENTITY)
-                .add_script(light_origin_script)
-                .add_child(
+                // Node::builder("light_origin")
+                // .add_component(Transform::IDENTITY)
+                // .add_script(light_origin_script)
+                // .add_child(
                     Node::builder("light")
-                    .add_component(Transform::from_tranlation_scale(glam::vec3(15.0, 10.0, 0.0), glam::Vec3::splat(0.25)))
+                    .add_component(Transform::from_tranlation_scale(glam::vec3(0.0, 2.0, 0.0), glam::Vec3::splat(0.25)))
                     // .add_component(Transform::from_tranlation_scale(glam::vec3(2.0, 0.1, 0.0), glam::Vec3::splat(0.25)))
-                    .add_component(PointLight::new(Rgba::new(0.0, 0.0, 1.0, 10.0)))
+                    .add_component(PointLight::new(Rgba::new(1.0, 0.8, 0.6, 10.0)))
                     .add_child(
                         Node::builder("light_model")
                         .add_component(Transform::IDENTITY)
@@ -189,21 +282,21 @@ async fn main() {
                         .build()
                     )
                     .build()
-                )
-                .build()
+                // )
+                // .build()
             )
             .add_child(
                 Node::builder("camera")
                 .add_component(Transform::from_tranlation(glam::vec3(0.0, 0.0, 3.0)))
-                .add_component(Camera {
+                .add_component(Camera::Perspective {
                     fovy: std::f32::consts::FRAC_PI_3,
-                    znear: 0.01,
-                    zfar: 10000.0,
+                    znear: 0.1,
+                    zfar: Some(10000.0),
                 })
                 .add_child(
                     Node::builder("cam_light")
                     .add_component(Transform::IDENTITY)
-                    .add_component(PointLight::new(Rgba::GREEN))
+                    // .add_component(PointLight::new(Rgba::new(1.0, 1.0, 1.0, 0.5)))
                     .build()
                 )
                 .add_script(camera_script)

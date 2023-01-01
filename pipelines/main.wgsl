@@ -1,5 +1,7 @@
 // Inputs
 
+let PI: f32 = 3.14159265358979323846264338327950288;
+
 struct Transform {
     model_matrix: mat4x4<f32>,
     inv_model_matrix: mat4x4<f32>,
@@ -10,40 +12,44 @@ struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
 
-struct PointLight {
-    position: vec3<f32>,
+// struct PointLight {
+//     position: vec3<f32>,
+//     colour: vec4<f32>,
+// }
+
+// struct DirectionalLight {
+//     direction: vec3<f32>,
+//     colour: vec4<f32>,
+// }
+
+struct Light {
+    pos_dir: vec3<f32>,
     colour: vec4<f32>,
 }
 
-struct DirectionalLight {
-    direction: vec3<f32>,
+struct AmbientLight {
     colour: vec4<f32>,
 }
 
-@group(0) @binding(0)
-var diffuse_texture: texture_2d<f32>;
-@group(0) @binding(1)
-var diffuse_sampler: sampler;
-@group(0) @binding(2)
-var<uniform> diffuse_colour: vec4<f32>;
-@group(0) @binding(3)
-var normal_texture: texture_2d<f32>;
-@group(0) @binding(4)
-var normal_sampler: sampler;
-@group(0) @binding(5)
-var<uniform> normal_factor: f32;
-@group(0) @binding(6)
+//!include("includes/tonemapping.wgsl")
+//!include("includes/material_bindings.wgsl")
+
+//!binding()
 var<uniform> transform: Transform;
-@group(0) @binding(7)
+//!binding()
 var<uniform> camera: CameraUniform;
-@group(0) @binding(8)
-var<storage> point_lights: array<PointLight>;
-@group(0) @binding(9)
+//!binding()
+var<storage> point_lights: array<Light>;
+//!binding()
 var<uniform> num_point_lights: u32;
-@group(0) @binding(10)
-var<storage> directional_lights: array<DirectionalLight>;
-@group(0) @binding(11)
+//!binding()
+var<storage> directional_lights: array<Light>;
+//!binding()
 var<uniform> num_directional_lights: u32;
+//!binding()
+var<storage> ambient_lights: array<AmbientLight>;
+//!binding()
+var<uniform> num_ambient_lights: u32;
 
 // Vertex Shader
 
@@ -84,72 +90,172 @@ fn vs_main(
 
 // Fragment Shader
 
-fn calc_point_light(light: PointLight, position: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>, colour: vec4<f32>) -> vec3<f32> {
-    let light_colour = light.colour.xyz * light.colour.w;
-    
-    // We don't need (or want) much ambient light, so 0.1 is fine
-    let ambient_strength = 0.1;
-    let ambient_colour = light_colour * ambient_strength;
-
-    // Create the lighting vectors
-    let light_vec = light.position - position;
-    let light_dir = normalize(light_vec);
-    let half_dir = normalize(view_dir + light_dir);
-
-    let diffuse_strength = max(dot(normal, light_dir), 0.0);
-    let diffuse_colour = light_colour * diffuse_strength;
-
-    let specular_strength = pow(max(dot(normal, half_dir), 0.0), 32.0);
-    let specular_colour = specular_strength * light_colour;
-
-    let attenuation = length(light_vec) * length(light_vec);
-
-    let result = (ambient_colour + diffuse_colour + specular_colour) * colour.xyz / attenuation;
-
-    return result;
+fn distribution_ggx(normal: vec3<f32>, half: vec3<f32>, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let ndoth = max(dot(normal, half), 0.0);
+    let ndoth2 = ndoth * ndoth;
+	
+    let num = a2;
+    let denom = (ndoth2 * (a2 - 1.0) + 1.0);
+    let denom = PI * denom * denom;
+	
+    return num / denom;
 }
 
-fn calc_directional_light(light: DirectionalLight, position: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>, colour: vec4<f32>) -> vec3<f32> {
-    let light_colour = light.colour.xyz * light.colour.w;
-    
-    // We don't need (or want) much ambient light, so 0.1 is fine
-    let ambient_strength = 0.1;
-    let ambient_colour = light_colour * ambient_strength;
+fn geometry_schlick_ggx(ndotv: f32, roughness: f32) -> f32 {
+    let r = (roughness + 1.0);
+    let k = (r*r) / 8.0;
 
-    // Create the lighting vectors
-    let light_dir = normalize(light.direction);
-    let half_dir = normalize(view_dir + light_dir);
-
-    let diffuse_strength = max(dot(normal, light_dir), 0.0);
-    let diffuse_colour = light_colour * diffuse_strength;
-
-    let specular_strength = pow(max(dot(normal, half_dir), 0.0), 32.0);
-    let specular_colour = specular_strength * light_colour;
-
-    let result = (ambient_colour + diffuse_colour + specular_colour) * colour.xyz;
-
-    return result;
+    let num = ndotv;
+    let denom = ndotv * (1.0 - k) + k;
+	
+    return num / denom;
 }
+
+fn geometry_smith(normal: vec3<f32>, view: vec3<f32>, light_dir: vec3<f32>, roughness: f32) -> f32{
+    let ndotv = max(dot(normal, view), 0.0);
+    let ndotl = max(dot(normal, light_dir), 0.0);
+    let ggx_v  = geometry_schlick_ggx(ndotv, roughness);
+    let ggx_l  = geometry_schlick_ggx(ndotl, roughness);
+	
+    return ggx_v * ggx_l;
+}
+
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+fn calc_light(light: Light, directional: bool, material: Material, position: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+    // let light_colour = light.colour.rgb * light.colour.a;
+    
+    // // We don't need (or want) much ambient light, so 0.1 is fine
+    // // let ambient_strength = 0.1;
+    // // let ambient_colour = light_colour * ambient_strength;
+
+    // // Create the lighting vectors
+    // let light_vec = light.position - position;
+    // let light_dir = normalize(light_vec);
+    // let half_dir = normalize(view_dir + light_dir);
+
+    // let diffuse_strength = max(dot(normal, light_dir), 0.0);
+    // let diffuse_colour = light_colour * diffuse_strength;
+
+    // let specular_strength = pow(max(dot(normal, half_dir), 0.0), 32.0);
+    // let specular_colour = specular_strength * light_colour;
+
+    // let attenuation = length(light_vec) * length(light_vec);
+
+    // let result = (diffuse_colour + specular_colour) * material.albedo.rgb / attenuation;
+
+    // return result;
+    let light_colour = light.colour.rgb * light.colour.a;
+
+    let light_vec = light.pos_dir - position;
+    
+    var light_dir = vec3(0.0);
+    if (directional) {
+        light_dir = light.pos_dir;
+    } else {
+        light_dir = normalize(light_vec);
+    };
+    
+    let half_dir = normalize(view_dir + light_dir);
+    
+    var attenuation = 1.0;
+    if (!directional) {
+        let distance = length(light_vec);
+        attenuation /= distance * distance + 1.0;
+    };
+    
+    let radiance = light_colour * attenuation;    
+    
+    let f0 = vec3(0.04);
+    let f0 = mix(f0, material.albedo.rgb, material.metallic);
+    let f = fresnel_schlick(max(dot(half_dir, view_dir), 0.0), f0);
+    let ndf = distribution_ggx(normal, half_dir, material.roughness);
+    let g = geometry_smith(normal, view_dir, light_dir, material.roughness);
+
+    let ks = f;
+    let kd = (vec3(1.0) - ks) * (1.0 - material.metallic);
+    
+    let numerator = ndf * g * f;
+    let denominator = 4.0 * max(dot(normal, view_dir), 0.0) * max(dot(normal, light_dir), 0.0)  + 0.0001;
+    let specular = numerator / denominator;
+    
+    let ndotl = max(dot(normal, light_dir), 0.0);        
+    return (kd * material.albedo.rgb / PI + specular) * radiance * ndotl;
+}
+
+// fn calc_directional_light(light: DirectionalLight, material: Material, position: vec3<f32>, normal: vec3<f32>, view_dir: vec3<f32>) -> vec3<f32> {
+//     let light_colour = light.colour.rgb * light.colour.a;
+    
+//     // We don't need (or want) much ambient light, so 0.1 is fine
+//     // let ambient_strength = 0.1;
+//     // let ambient_colour = light_colour * ambient_strength;
+
+//     // Create the lighting vectors
+//     let light_dir = normalize(light.direction);
+//     let half_dir = normalize(view_dir + light_dir);
+
+//     let diffuse_strength = max(dot(normal, light_dir), 0.0);
+//     let diffuse_colour = light_colour * diffuse_strength;
+
+//     let specular_strength = pow(max(dot(normal, half_dir), 0.0), 32.0);
+//     let specular_colour = specular_strength * light_colour;
+
+//     let result = (diffuse_colour + specular_colour) * material.albedo.rgb;
+
+//     return result;
+// }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let colour: vec4<f32> = textureSample(diffuse_texture, diffuse_sampler, in.tex_coords) * diffuse_colour;
-    let map_normal: vec3<f32> = (textureSample(normal_texture, normal_sampler, in.tex_coords) * 2.0 - 1.0).xyz * normal_factor;
+    let map_normal = (textureSample(normal_texture, normal_sampler, in.tex_coords) * 2.0 - 1.0).rgb;
+    let map_normal = mix(vec3(0.0, 0.0, 1.0), map_normal, normal_scale);
+    // let map_normal = vec3(0.0, 0.0, 1.0);
+
+    let metallic_roughness = textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.tex_coords);
+
+    var material: Material;
+    material.albedo = textureSample(albedo_texture, albedo_sampler, in.tex_coords);
+    material.albedo = pow(material.albedo, vec4(2.2)) * albedo;
+    material.metallic = metallic_roughness.b * metallic_factor;
+    material.roughness = metallic_roughness.g * roughness_factor;
+    material.occlusion = mix(1.0, textureSample(occlusion_texture, occlusion_sampler, in.tex_coords).r, occlusion_strength);
+    material.emissive = textureSample(emissive_texture, emissive_sampler, in.tex_coords) * emissive_factor;
+
+    if (material.albedo.a < 0.1) {
+        discard;
+    }
 
     let tbn = mat3x3(in.tangent, in.bitangent, in.normal);
     let normal = normalize(tbn * map_normal);
     let view_dir = normalize(camera.position.xyz - in.position);
 
-    var final_colour = vec3(0.0);
-    
+    var reflectance = vec3(0.0);
     for (var i = 0u; i < num_point_lights; i++) {
-        final_colour += calc_point_light(point_lights[i], in.position, normal, view_dir, colour);
+        reflectance += calc_light(point_lights[i], false, material, in.position, normal, view_dir);
     }
     
     for (var i = 0u; i < num_directional_lights; i++) {
-        final_colour += calc_directional_light(directional_lights[i], in.position, normal, view_dir, colour);
+        reflectance += calc_light(directional_lights[i], true, material, in.position, normal, view_dir);
     }
     
-    return vec4(final_colour, colour.a);
-    // return vec4((normal + 1.0) / 2.0, 1.0);
+    var ambient_light = vec3(0.0);
+    for (var i = 0u; i < num_ambient_lights; i++) {
+        ambient_light += ambient_lights[i].colour.rgb * ambient_lights[i].colour.a * material.albedo.rgb;
+    }
+    ambient_light *= material.occlusion;
+
+    var final_colour = reflectance + ambient_light + material.emissive.rgb;
+    
+    // final_colour /= (final_colour + vec3(1.0));
+
+    let final_colour = tonemap(final_colour);
+    
+    return vec4(final_colour, material.albedo.a);
+    // return vec4(in.tex_coords, 0.0, 1.0);
+    // return vec4(pow(in.normal, vec3(2.2)), 1.0);
+    // return vec4(vec3(normal_scale / 2.0), 1.0);
 }

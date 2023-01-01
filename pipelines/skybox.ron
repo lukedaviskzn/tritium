@@ -2,13 +2,13 @@ ShaderResource (
     name: "skybox",
     inputs: [
         Node (
-            layout: CubeMap,
-            bind_group: "cubemap",
+            ty: CubeMap,
+            res: "cubemap",
         ),
-        Global (
-            layout: Uniform,
-            resource: "current_camera",
-            bind_group: "camera",
+        GlobalNode (
+            ty: Uniform,
+            node: "current_camera",
+            res: "camera",
         ),
     ],
     vertex_type: Position,

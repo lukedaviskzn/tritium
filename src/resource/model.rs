@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use crate::{renderer::{Vertex, Renderer, RenderInput, RenderableResource, PositionVertex, ModelVertex}, node::NodeDescriptor};
+use crate::{renderer::{Vertex, Renderer, RenderInput, RenderableResource, PositionVertex, ModelVertex}, node::NodeDescriptor, resource::compute_tangents};
 
 use super::{Material, Handle, Resources};
 
@@ -17,46 +17,46 @@ impl Model {
         ];
 
         let mesh = if material.is_some() {
-            Mesh::new(renderer, resources, "plane", vec![
+            Mesh::new(renderer, resources, Some("plane"), vec![
                 // 0 1
                 // 3 2
                 ModelVertex {
-                    position:[-1.0,0.0, -1.0],
-                    tex_coords: [0.0, 0.0],
-                    normal: [0.0, 1.0, 0.0],
-                    tangent: [1.0, 0.0, 0.0],
-                    bitangent: [0.0, 0.0, -1.0],
+                    position: glam::vec3(-1.0,0.0, -1.0),
+                    tex_coords: glam::vec2(0.0, 0.0),
+                    normal: glam::vec3(0.0, 1.0, 0.0),
+                    tangent: glam::vec3(1.0, 0.0, 0.0),
+                    bitangent: glam::vec3(0.0, 0.0, -1.0),
                 },
                 ModelVertex {
-                    position: [ 1.0, 0.0, -1.0],
-                    tex_coords: [1.0, 0.0],
-                    normal: [0.0, 1.0, 0.0],
-                    tangent: [1.0, 0.0, 0.0],
-                    bitangent: [0.0, 0.0, -1.0],
+                    position: glam::vec3( 1.0, 0.0, -1.0),
+                    tex_coords: glam::vec2(1.0, 0.0),
+                    normal: glam::vec3(0.0, 1.0, 0.0),
+                    tangent: glam::vec3(1.0, 0.0, 0.0),
+                    bitangent: glam::vec3(0.0, 0.0, -1.0),
                 },
                 ModelVertex {
-                    position: [ 1.0, 0.0,  1.0],
-                    tex_coords: [1.0, 1.0],
-                    normal: [0.0, 1.0, 0.0],
-                    tangent: [1.0, 0.0, 0.0],
-                    bitangent: [0.0, 0.0, -1.0],
+                    position: glam::vec3( 1.0, 0.0,  1.0),
+                    tex_coords: glam::vec2(1.0, 1.0),
+                    normal: glam::vec3(0.0, 1.0, 0.0),
+                    tangent: glam::vec3(1.0, 0.0, 0.0),
+                    bitangent: glam::vec3(0.0, 0.0, -1.0),
                 },
                 ModelVertex {
-                    position: [-1.0, 0.0,  1.0],
-                    tex_coords: [0.0, 1.0],
-                    normal: [0.0, 1.0, 0.0],
-                    tangent: [1.0, 0.0, 0.0],
-                    bitangent: [0.0, 0.0, -1.0],
+                    position: glam::vec3(-1.0, 0.0,  1.0),
+                    tex_coords: glam::vec2(0.0, 1.0),
+                    normal: glam::vec3(0.0, 1.0, 0.0),
+                    tangent: glam::vec3(1.0, 0.0, 0.0),
+                    bitangent: glam::vec3(0.0, 0.0, -1.0),
                 },
             ], indices, material)
         } else {
-            Mesh::new(renderer, resources, "plane", vec![
+            Mesh::new(renderer, resources, Some("plane"), vec![
                 // 0 1
                 // 3 2
-                PositionVertex { position: [-1.0, 0.0, -1.0] },
-                PositionVertex { position: [ 1.0, 0.0, -1.0] },
-                PositionVertex { position: [ 1.0, 0.0,  1.0] },
-                PositionVertex { position: [-1.0, 0.0,  1.0] },
+                PositionVertex { position: glam::vec3(-1.0, 0.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0, 0.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0, 0.0,  1.0) },
+                PositionVertex { position: glam::vec3(-1.0, 0.0,  1.0) },
             ], indices, material)
         };
         
@@ -69,19 +69,19 @@ impl Model {
 
     pub fn new_cube(renderer: &Renderer, resources: &mut Resources, material: Option<Handle<Material>>) -> Model {
         let model = Model {
-            meshes: vec![Mesh::new(renderer, resources, "cube", vec![
+            meshes: vec![Mesh::new(renderer, resources, Some("cube"), vec![
                 // 0 1
                 // 3 2
-                PositionVertex { position: [-1.0,  1.0, -1.0] },
-                PositionVertex { position: [ 1.0,  1.0, -1.0] },
-                PositionVertex { position: [ 1.0, -1.0, -1.0] },
-                PositionVertex { position: [-1.0, -1.0, -1.0] },
+                PositionVertex { position: glam::vec3(-1.0,  1.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0,  1.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0, -1.0, -1.0) },
+                PositionVertex { position: glam::vec3(-1.0, -1.0, -1.0) },
                 // 4 5
                 // 7 6
-                PositionVertex { position: [-1.0,  1.0,  1.0] },
-                PositionVertex { position: [ 1.0,  1.0,  1.0] },
-                PositionVertex { position: [ 1.0, -1.0,  1.0] },
-                PositionVertex { position: [-1.0, -1.0,  1.0] },
+                PositionVertex { position: glam::vec3(-1.0,  1.0,  1.0) },
+                PositionVertex { position: glam::vec3( 1.0,  1.0,  1.0) },
+                PositionVertex { position: glam::vec3( 1.0, -1.0,  1.0) },
+                PositionVertex { position: glam::vec3(-1.0, -1.0,  1.0) },
             ], vec![
                 // back face
                 1, 2, 0,
@@ -109,19 +109,19 @@ impl Model {
 
     pub fn new_inverted_cube(renderer: &Renderer, resources: &mut Resources, material: Option<Handle<Material>>) -> Model {
         let model = Model {
-            meshes: vec![Mesh::new(renderer, resources, "inverted_cube", vec![
+            meshes: vec![Mesh::new(renderer, resources, Some("inverted_cube"), vec![
                 // 0 1
                 // 3 2
-                PositionVertex { position: [-1.0,  1.0, -1.0] },
-                PositionVertex { position: [ 1.0,  1.0, -1.0] },
-                PositionVertex { position: [ 1.0, -1.0, -1.0] },
-                PositionVertex { position: [-1.0, -1.0, -1.0] },
+                PositionVertex { position: glam::vec3(-1.0,  1.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0,  1.0, -1.0) },
+                PositionVertex { position: glam::vec3( 1.0, -1.0, -1.0) },
+                PositionVertex { position: glam::vec3(-1.0, -1.0, -1.0) },
                 // 4 5
                 // 7 6
-                PositionVertex { position: [-1.0,  1.0,  1.0] },
-                PositionVertex { position: [ 1.0,  1.0,  1.0] },
-                PositionVertex { position: [ 1.0, -1.0,  1.0] },
-                PositionVertex { position: [-1.0, -1.0,  1.0] },
+                PositionVertex { position: glam::vec3(-1.0,  1.0,  1.0) },
+                PositionVertex { position: glam::vec3( 1.0,  1.0,  1.0) },
+                PositionVertex { position: glam::vec3( 1.0, -1.0,  1.0) },
+                PositionVertex { position: glam::vec3(-1.0, -1.0,  1.0) },
             ], vec![
                 // back face
                 0, 2, 1,
@@ -146,10 +146,86 @@ impl Model {
 
         model
     }
+
+    pub fn new_sphere(renderer: &Renderer, resources: &mut Resources, material: Option<Handle<Material>>, subdivisions: u32) -> Model {
+        // let subdivisions = 4;
+        
+        // (dir, tangent, bitangent)
+        let dirs = [
+            (glam::Vec3::X, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            (glam::Vec3::NEG_X, glam::Vec3::Z, glam::Vec3::Y),
+            (glam::Vec3::Y, glam::Vec3::X, glam::Vec3::NEG_Z),
+            (glam::Vec3::NEG_Y, glam::Vec3::NEG_X, glam::Vec3::NEG_Z),
+            (glam::Vec3::Z, glam::Vec3::X, glam::Vec3::Y),
+            (glam::Vec3::NEG_Z, glam::Vec3::NEG_X, glam::Vec3::Y),
+        ];
+
+        let use_model_vertices = material.is_some();
+
+        let mut model_vertices = vec![];
+        let mut position_vertices = vec![];
+
+        for (dir, tangent, bitangent) in dirs {
+            for y in 0..(subdivisions + 1) {
+                let cy = y as f32 * 2.0 / subdivisions as f32 - 1.0;
+                for x in 0..(subdivisions + 1) {
+                    let cx = x as f32 * 2.0 / subdivisions as f32 - 1.0;
+                    let pos = (dir + cx * tangent + cy * bitangent).normalize();
+
+                    if use_model_vertices {
+                        model_vertices.push(ModelVertex {
+                            position: pos,
+                            tex_coords: glam::vec2(x as f32 / subdivisions as f32, y as f32 / subdivisions as f32),
+                            normal: pos,
+                            tangent: glam::Vec3::ZERO,
+                            bitangent: glam::Vec3::ZERO,
+                        });
+                    } else {
+                        position_vertices.push(PositionVertex {
+                            position: pos,
+                        });
+                    }
+                }
+            }
+        }
+        
+        let mut indices = vec![];
+
+        for f in 0..6 {
+            let face_offset = (f * (subdivisions + 1) * (subdivisions + 1)) as u32;
+            for y in 0..subdivisions {
+                let row_offset = (y * (subdivisions + 1)) as u32;
+                for x in 0..subdivisions {
+                    let index = (face_offset + row_offset + x as u32) as u32;
+                    
+                    indices.push(index);
+                    indices.push(index + 1);
+                    indices.push(index + (subdivisions + 1) + 1);
+                    indices.push(index);
+                    indices.push(index + (subdivisions + 1) + 1);
+                    indices.push(index + (subdivisions + 1));
+                }
+            }
+        }
+
+        if use_model_vertices {
+            compute_tangents(&mut model_vertices, &indices);
+        }
+        
+        let mesh = if use_model_vertices {
+            Mesh::new(renderer, resources, Some("sphere"), model_vertices, indices, material)
+        } else {
+            Mesh::new(renderer, resources, Some("sphere"), position_vertices, indices, material)
+        };
+
+        Model {
+            meshes: vec![mesh],
+        }
+    }
 }
 
 pub struct Mesh {
-    pub name: String,
+    pub name: Option<String>,
     pub(crate) vertex_buffer: Handle<wgpu::Buffer>,
     pub(crate) index_buffer: Handle<wgpu::Buffer>,
     pub num_elements: u32,
@@ -157,7 +233,7 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new<T: Vertex>(renderer: &Renderer, resources: &mut Resources, name: &str, vertices: Vec<T>, indices: Vec<u32>, material: Option<Handle<Material>>) -> Mesh {
+    pub fn new<T: Vertex>(renderer: &Renderer, resources: &mut Resources, name: Option<&str>, vertices: Vec<T>, indices: Vec<u32>, material: Option<Handle<Material>>) -> Mesh {
         let num_elements = indices.len() as u32;
 
         let vertex_buffer = resources.store(renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -173,7 +249,7 @@ impl Mesh {
         }));
 
         Mesh {
-            name: name.into(),
+            name: name.map(|n| n.into()),
             vertex_buffer,
             index_buffer,
             num_elements,

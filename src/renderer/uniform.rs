@@ -166,36 +166,4 @@ impl StorageBuffer {
     pub(crate) fn binding_resources(&self) -> [BindingHolder; 2] {
         [BindingHolder::Buffer(self.buffer.clone()), BindingHolder::Buffer(self.len_buffer.clone())]
     }
-
-    // pub fn array_bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
-    //     wgpu::BindGroupLayoutDescriptor {
-    //         entries: &[
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 0,
-    //                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-    //                 ty: wgpu::BindingType::Buffer {
-    //                     ty: wgpu::BufferBindingType::Storage { read_only: true },
-    //                     has_dynamic_offset: false,
-    //                     min_binding_size: None,
-    //                 },
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 1,
-    //                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-    //                 ty: wgpu::BindingType::Buffer {
-    //                     ty: wgpu::BufferBindingType::Uniform,
-    //                     has_dynamic_offset: false,
-    //                     min_binding_size: None,
-    //                 },
-    //                 count: None,
-    //             },
-    //         ],
-    //         label: None,
-    //     }
-    // }
-
-    // pub fn bind_group(&self) -> Handle<wgpu::BindGroup> {
-    //     self.bind_group.clone()
-    // }
 }

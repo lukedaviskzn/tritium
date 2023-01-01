@@ -8,6 +8,9 @@ use super::Resources;
 pub struct HandleId(Uid);
 
 // todo: separate into separate Handle and WeakHandle structs
+
+trait HandlesResource {}
+
 pub enum Handle<T> {
     Strong(HandleId, Arc<PhantomData<T>>),
     Weak(HandleId, std::sync::Weak<PhantomData<T>>),

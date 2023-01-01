@@ -1,50 +1,70 @@
+use std::num::NonZeroU32;
+
 use crate::{engine::Rgba, renderer::{Renderer, UniformBuffer, BindingHolder}};
 
 use super::{Texture, Handle, Resources};
 
+pub enum AlphaMode {
+    Opaque,
+    Mask { cutoff: f32 },
+    Blend,
+}
+
 pub struct Material {
-    name: String,
-    diffuse_texture: Handle<Texture>,
-    // diffuse_colour: Rgba,
-    diffuse_colour_buffer: UniformBuffer,
+    name: Option<String>,
+    double_sided: bool,
+    alpha_mode: AlphaMode,
+    albedo_texture: Handle<Texture>,
+    albedo_buffer: UniformBuffer, // diffuse_colour: Rgba,
+    metallic_roughness_texture: Handle<Texture>,
+    metallic_factor_buffer: UniformBuffer, // metallic_factor: f32,
+    roughness_factor_buffer: UniformBuffer, // roughness_factor: f32,
     normal_texture: Handle<Texture>,
-    // normal_factor: f32,
-    normal_factor_buffer: UniformBuffer,
-    // bind_group: Handle<wgpu::BindGroup>,
+    normal_scale_buffer: UniformBuffer, // normal_scale: f32,
+    occlusion_texture: Handle<Texture>,
+    occlusion_strength_buffer: UniformBuffer, // normal_strength: f32,
+    emissive_texture: Handle<Texture>,
+    emissive_factor_buffer: UniformBuffer, // emissive_factor: Rgba,
 }
 
 impl Material {
-    pub fn new(
+    fn new(
         renderer: &Renderer,
-        // device: &wgpu::Device,
         resources: &mut Resources,
-        name: &str,
-        diffuse_texture: Option<Handle<Texture>>,
-        diffuse_colour: Rgba,
+        name: Option<String>,
+        double_sided: bool,
+        alpha_mode: AlphaMode,
+        albedo_texture: Option<Handle<Texture>>,
+        albedo: Rgba,
+        metallic_roughness_texture: Option<Handle<Texture>>,
+        metallic_factor: f32,
+        roughness_factor: f32,
         normal_texture: Option<Handle<Texture>>,
-        normal_factor: f32,
-        // material_layout: &wgpu::BindGroupLayout,
+        normal_scale: f32,
+        occlusion_texture: Option<Handle<Texture>>,
+        occlusion_strength: f32,
+        emissive_texture: Option<Handle<Texture>>,
+        emissive_factor: Rgba,
     ) -> Material {
-        // let diffuse_colour_buffer = renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: None,
-        //     contents: bytemuck::cast_slice(&[diffuse_colour]),
-        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        // });
-
-        // let normal_factor_buffer = renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: None,
-        //     contents: bytemuck::cast_slice(&[normal_factor]),
-        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        // });
-
-        let diffuse_texture = if let Some(diffuse_texture) = diffuse_texture {
-            diffuse_texture
+        let albedo_texture = if let Some(albedo_texture) = albedo_texture {
+            albedo_texture
         } else {
             let texture = Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], None, false);
             resources.store(texture)
         };
 
-        let diffuse_colour_buffer = UniformBuffer::from_value(renderer, resources, diffuse_colour);
+        let albedo_buffer = UniformBuffer::from_value(renderer, resources, albedo);
+
+        let metallic_roughness_texture = if let Some(metallic_roughness_texture) = metallic_roughness_texture {
+            metallic_roughness_texture
+        } else {
+            // default: metallic: 1.0, roughness: 1.0
+            let texture = Texture::from_pixel(renderer, resources, &[255, 255, 0, 0], None, false);
+            resources.store(texture)
+        };
+
+        let metallic_factor_buffer = UniformBuffer::from_value(renderer, resources, metallic_factor);
+        let roughness_factor_buffer = UniformBuffer::from_value(renderer, resources, roughness_factor);
 
         let normal_texture = if let Some(normal_texture) = normal_texture {
             normal_texture
@@ -53,139 +73,73 @@ impl Material {
             resources.store(texture)
         };
 
-        let normal_factor_buffer = UniformBuffer::from_value(renderer, resources, normal_factor);
+        let normal_scale_buffer = UniformBuffer::from_value(renderer, resources, normal_scale);
 
-        let diffuse_texture_res = resources.get(&diffuse_texture).expect("Attempted to create material with invalid diffuse texture handle.");
-        let normal_texture_res = resources.get(&normal_texture).expect("Attempted to create material with invalid normal texture handle.");
+        let occlusion_texture = if let Some(occlusion_texture) = occlusion_texture {
+            occlusion_texture
+        } else {
+            let texture = Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], None, false);
+            resources.store(texture)
+        };
 
-        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label: Some(name),
-        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Material],
-        //     entries: &[
-        //         // Diffuse
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: wgpu::BindingResource::TextureView(&diffuse_texture_res.view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::Sampler(&diffuse_texture_res.sampler),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 2,
-        //             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-        //                 buffer: &diffuse_colour_buffer,
-        //                 offset: 0,
-        //                 size: None,
-        //             }),
-        //         },
-        //         // Normals
-        //         wgpu::BindGroupEntry {
-        //             binding: 3,
-        //             resource: wgpu::BindingResource::TextureView(&normal_texture_res.view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 4,
-        //             resource: wgpu::BindingResource::Sampler(&normal_texture_res.sampler),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 5,
-        //             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-        //                 buffer: &normal_factor_buffer,
-        //                 offset: 0,
-        //                 size: None,
-        //             }),
-        //         },
-        //     ],
-        // }));
+        let occlusion_strength_buffer = UniformBuffer::from_value(renderer, resources, occlusion_strength);
+
+        let emissive_texture = if let Some(emissive_texture) = emissive_texture {
+            emissive_texture
+        } else {
+            let texture = Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], None, false);
+            resources.store(texture)
+        };
+
+        let emissive_factor_buffer = UniformBuffer::from_value(renderer, resources, emissive_factor);
+
+        // let diffuse_texture_res = resources.get(&diffuse_texture).expect("Attempted to create material with invalid diffuse texture handle.");
+        // let normal_texture_res = resources.get(&normal_texture).expect("Attempted to create material with invalid normal texture handle.");
 
         Material {
-            name: name.into(),
-            diffuse_texture: diffuse_texture.clone(),
-            // diffuse_colour,
-            diffuse_colour_buffer,
-            normal_texture: normal_texture.clone(),
-            // normal_factor,
-            normal_factor_buffer,
-            // bind_group,
+            name,
+            double_sided,
+            alpha_mode,
+            albedo_texture,
+            albedo_buffer,
+            metallic_roughness_texture,
+            metallic_factor_buffer,
+            roughness_factor_buffer,
+            normal_texture,
+            normal_scale_buffer,
+            occlusion_texture,
+            occlusion_strength_buffer,
+            emissive_texture,
+            emissive_factor_buffer,
         }
     }
 
-    // pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
-    //     self.bind_group.clone()
-    // }
-
-    // pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
-    //     wgpu::BindGroupLayoutDescriptor {
-    //         label: Some("Material Bind Group Layout"),
-    //         entries: &[
-    //             // Diffuse Texture
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 0,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Texture {
-    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-    //                     view_dimension: wgpu::TextureViewDimension::D2,
-    //                     multisampled: false,
-    //                 },
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 1,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 2,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Buffer {
-    //                     ty: wgpu::BufferBindingType::Uniform,
-    //                     has_dynamic_offset: false,
-    //                     min_binding_size: None,
-    //                 },
-    //                 count: None,
-    //             },
-    //             // Normal Texture
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 3,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Texture {
-    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-    //                     view_dimension: wgpu::TextureViewDimension::D2,
-    //                     multisampled: false,
-    //                 },
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 4,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 5,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Buffer {
-    //                     ty: wgpu::BufferBindingType::Uniform,
-    //                     has_dynamic_offset: false,
-    //                     min_binding_size: None,
-    //                 },
-    //                 count: None,
-    //             },
-    //         ],
-    //     }
-    // }
-
     pub(crate) fn binding_types() -> Vec<wgpu::BindingType> {
         vec![
-            // Diffuse Texture
+            // Base Colour Texture
             wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
             },
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            // Metallic Roughness Texture
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -203,48 +157,214 @@ impl Material {
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
+            // Occlusion Texture
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            // Emissive Texture
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
         ]
     }
 
-    pub(crate) fn binding_resources(&self, _renderer: &Renderer, resources: &Resources) -> [BindingHolder; 4] {
-        let diffuse_texture = resources.get(&self.diffuse_texture).expect("Material has invalid diffuse texture handle.");
-        let normal_texture = resources.get(&self.normal_texture).expect("Material has invalid normal texture handle.");
+    pub(crate) fn binding_resources(&self, resources: &Resources) -> [BindingHolder; 11] {
+        let name = match &self.name {
+            Some(name) => format!("Material '{}'", name),
+            None => "Unnamed material".into(),
+        };
+        // let diffuse_texture = resources.get(&self.diffuse_texture).expect("Material has invalid diffuse texture handle.");
+        // let normal_texture = resources.get(&self.normal_texture).expect("Material has invalid normal texture handle.");
+        let albedo_texture = resources.get(&self.albedo_texture).expect(&format!("{} holds invalid base colour texture handle.", name));
+        let metallic_roughness_texture = resources.get(&self.metallic_roughness_texture).expect(&format!("{} holds invalid metallic roughness texture handle.", name));
+        let normal_texture = resources.get(&self.normal_texture).expect(&format!("{} holds invalid normal texture handle.", name));
+        let occlusion_texture = resources.get(&self.occlusion_texture).expect(&format!("{} holds invalid occlusion texture handle.", name));
+        let emissive_texture = resources.get(&self.emissive_texture).expect(&format!("{} holds invalid emissive texture handle.", name));
         
         [
-            diffuse_texture.binding_resource(),
-            self.diffuse_colour_buffer.binding_resource(),
+            albedo_texture.binding_resource(),
+            self.albedo_buffer.binding_resource(),
+            metallic_roughness_texture.binding_resource(),
+            self.metallic_factor_buffer.binding_resource(),
+            self.roughness_factor_buffer.binding_resource(),
             normal_texture.binding_resource(),
-            self.normal_factor_buffer.binding_resource(),
+            self.normal_scale_buffer.binding_resource(),
+            occlusion_texture.binding_resource(),
+            self.occlusion_strength_buffer.binding_resource(),
+            emissive_texture.binding_resource(),
+            self.emissive_factor_buffer.binding_resource(),
         ]
+    }
+
+    pub fn builder() -> MaterialBuilder {
+        MaterialBuilder::new()
     }
 }
 
-// pub(crate) struct MaterialBindingGenerator {
-//     diffuse_texture: Handle<Texture>,
-//     diffuse_colour_buffer: Handle<UniformBuffer>,
-//     normal_texture: Handle<Texture>,
-//     normal_factor_buffer: Handle<UniformBuffer>,
-// }
+pub struct MaterialBuilder {
+    name: Option<String>,
+    double_sided: bool,
+    alpha_mode: AlphaMode,
+    albedo_texture: Option<Handle<Texture>>,
+    albedo: Rgba,
+    metallic_roughness_texture: Option<Handle<Texture>>,
+    metallic_factor: f32,
+    metallic_set: bool,
+    roughness_factor: f32,
+    roughness_set: bool,
+    normal_texture: Option<Handle<Texture>>,
+    normal_scale: f32,
+    occlusion_texture: Option<Handle<Texture>>,
+    occlusion_strength: f32,
+    emissive_texture: Option<Handle<Texture>>,
+    emissive_factor: Rgba,
+    emissive_set: bool,
+}
 
-// impl BindingGenerator for MaterialBindingGenerator {
-//     fn binding_resources(&self, renderer: &Renderer, resources: &mut Resources) -> Vec<wgpu::BindingResource> {
-//         let mut out = vec![];
-//         let diffuse_texture = resources.get(&self.diffuse_texture).expect("Attempted to render texture with invalid handle.");
-//         let diffuse_texture = diffuse_texture.binding_resources(renderer, resources);
-//         out.extend(diffuse_texture.binding_resources(renderer, resources));
-        
-//         let diffuse_colour_buffer = resources.get(&self.diffuse_colour_buffer).expect("Attempted to access material buffer with invalid handle.");
-//         let diffuse_colour_buffer = diffuse_colour_buffer.binding_resource();
-//         out.extend(diffuse_colour_buffer.binding_resources(renderer, resources));
-        
-//         let normal_texture = resources.get(&self.normal_texture).expect("Attempted to render texture with invalid handle.");
-//         let normal_texture = normal_texture.binding_resources(renderer, resources);
-//         out.extend(normal_texture.binding_resources(renderer, resources));
-        
-//         let normal_factor_buffer = resources.get(&self.normal_factor_buffer).expect("Attempted to access material buffer with invalid handle.");
-//         let normal_factor_buffer = normal_factor_buffer.binding_resource();
-//         out.extend(normal_factor_buffer.binding_resources(renderer, resources));
+impl MaterialBuilder {
+    fn new() -> MaterialBuilder {
+        MaterialBuilder {
+            name: None,
+            double_sided: false,
+            alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
+            albedo_texture: None,
+            albedo: Rgba::WHITE,
+            metallic_roughness_texture: None,
+            metallic_factor: 1.0,
+            metallic_set: false,
+            roughness_factor: 1.0,
+            roughness_set: false,
+            normal_texture: None,
+            normal_scale: 1.0,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
+            emissive_texture: None,
+            emissive_factor: Rgba::WHITE,
+            emissive_set: false,
+        }
+    }
+    
+    pub fn name(mut self, name: &str) -> MaterialBuilder {
+        self.name = Some(name.to_owned());
+        self
+    }
 
-//         out
-//     }
-// }
+    pub fn double_sided(mut self, double_sided: bool) -> MaterialBuilder {
+        self.double_sided = double_sided;
+        self
+    }
+
+    pub fn alpha_mode(mut self, alpha_mode: AlphaMode) -> MaterialBuilder {
+        self.alpha_mode = alpha_mode;
+        self
+    }
+
+    pub fn albedo_texture(mut self, albedo_texture: Handle<Texture>) -> MaterialBuilder {
+        self.albedo_texture = Some(albedo_texture);
+        self
+    }
+
+    pub fn albedo(mut self, albedo: Rgba) -> MaterialBuilder {
+        self.albedo = albedo;
+        self
+    }
+
+    /// Combined metallic and roughness texture. (green: roughness, blue: metallic)
+    pub fn metallic_roughness_texture(mut self, metallic_roughness_texture: Handle<Texture>) -> MaterialBuilder {
+        self.metallic_roughness_texture = Some(metallic_roughness_texture);
+        self.metallic_set = true;
+        self.roughness_set = true;
+        self
+    }
+
+    pub fn metallic_factor(mut self, metallic_factor: f32) -> MaterialBuilder {
+        self.metallic_factor = metallic_factor;
+        self.metallic_set = true;
+        self
+    }
+
+    pub fn roughness_factor(mut self, roughness_factor: f32) -> MaterialBuilder {
+        self.roughness_factor = roughness_factor;
+        self.roughness_set = true;
+        self
+    }
+
+    pub fn normal_texture(mut self, normal_texture: Handle<Texture>) -> MaterialBuilder {
+        self.normal_texture = Some(normal_texture);
+        self
+    }
+
+    pub fn normal_scale(mut self, normal_scale: f32) -> MaterialBuilder {
+        self.normal_scale = normal_scale;
+        self
+    }
+
+    pub fn occlusion_texture(mut self, occlusion_texture: Handle<Texture>) -> MaterialBuilder {
+        self.occlusion_texture = Some(occlusion_texture);
+        self
+    }
+
+    pub fn occlusion_strength(mut self, occlusion_strength: f32) -> MaterialBuilder {
+        self.occlusion_strength = occlusion_strength;
+        self
+    }
+
+    pub fn emissive_texture(mut self, emissive_texture: Handle<Texture>) -> MaterialBuilder {
+        self.emissive_texture = Some(emissive_texture);
+        self.emissive_set = true;
+        self
+    }
+
+    pub fn emissive_factor(mut self, emissive_factor: Rgba) -> MaterialBuilder {
+        self.emissive_factor = emissive_factor;
+        self.emissive_set = true;
+        self
+    }
+
+    pub fn build(mut self, renderer: &Renderer, resources: &mut Resources) -> Material {
+        if !self.metallic_set {
+            self.metallic_factor = 0.0;
+        }
+        if !self.roughness_set {
+            self.roughness_factor = 0.5;
+        }
+        if !self.emissive_set {
+            self.emissive_factor = Rgba::TRANSPARENT_BLACK;
+        }
+
+        Material::new(
+            renderer,
+            resources,
+            self.name,
+            self.double_sided,
+            self.alpha_mode,
+            self.albedo_texture,
+            self.albedo,
+            self.metallic_roughness_texture,
+            self.metallic_factor,
+            self.roughness_factor,
+            self.normal_texture,
+            self.normal_scale,
+            self.occlusion_texture,
+            self.occlusion_strength,
+            self.emissive_texture,
+            self.emissive_factor
+        )
+    }
+}

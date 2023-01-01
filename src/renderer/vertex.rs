@@ -12,7 +12,7 @@ pub trait Vertex: bytemuck::Pod {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PositionVertex {
-    pub position: [f32; 3],
+    pub position: glam::Vec3,
 }
 
 impl Vertex for PositionVertex {
@@ -34,11 +34,11 @@ impl Vertex for PositionVertex {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelVertex {
-    pub position: [f32; 3],
-    pub tex_coords: [f32; 2],
-    pub normal: [f32; 3],
-    pub tangent: [f32; 3],
-    pub bitangent: [f32; 3],
+    pub position: glam::Vec3,
+    pub tex_coords: glam::Vec2,
+    pub normal: glam::Vec3,
+    pub tangent: glam::Vec3,
+    pub bitangent: glam::Vec3,
 }
 
 impl Vertex for ModelVertex {

@@ -8,18 +8,34 @@ pub const OPENGL_TO_WGPU_MATRIX: glam::Mat4 = glam::Mat4::from_cols_array(&[
     0.0, 0.0, 0.5, 1.0,
 ]);
 
-pub struct Camera {
-    // pub transform: Transform,
-    // pub aspect: f32,
-    pub fovy: f32,
-    pub znear: f32,
-    pub zfar: f32,
+pub enum Camera {
+    Perspective {
+        // aspect: f32,
+        fovy: f32,
+        znear: f32,
+        zfar: Option<f32>,
+    },
+    Orthographic {
+        // xmag: f32,
+        ymag: f32,
+        znear: f32,
+        zfar: f32,
+    },
 }
 
 impl Camera {
     fn build_view_projection_matrix(&self, transform: &Transform, aspect: f32) -> glam::Mat4 {
         let view = transform.global_matrix().inverse();
-        let proj = glam::Mat4::perspective_rh(self.fovy, aspect, self.znear, self.zfar);
+        let proj = match self {
+            Camera::Perspective { fovy, znear, zfar } => if let Some(zfar) = zfar {
+                glam::Mat4::perspective_rh(*fovy, aspect, *znear, *zfar)
+            } else {
+                glam::Mat4::perspective_infinite_rh(*fovy, aspect, *znear)
+            },
+            Camera::Orthographic { ymag, znear, zfar } => {
+                glam::Mat4::orthographic_rh(-ymag / 2.0 * aspect, ymag / 2.0 * aspect, -ymag / 2.0, ymag / 2.0, *znear, *zfar)
+            },
+        };
 
         return OPENGL_TO_WGPU_MATRIX * proj * view;
     }
@@ -49,18 +65,6 @@ impl Renderable for Camera {
         vec![RenderInput::BindingResources("camera".into(), uniform.binding_resource())]
     }
 }
-
-// pub(crate) struct CameraUpdateScript;
-
-// impl NodeScript for CameraUpdateScript {
-//     fn pre_update(&mut self, node: &mut crate::world::NodeDescriptor, context: &crate::engine::UpdateContext, _resources: &mut crate::resource::Resources) {
-//         for child in &mut node.children {
-//             child.traverse_mut(&mut |node| if let Some(camera) = node.get_component_mut::<Camera>() {
-//                 camera.aspect = context.window_size.x / context.window_size.y;
-//             });
-//         }
-//     }
-// }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

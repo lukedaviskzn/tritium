@@ -31,7 +31,7 @@ impl Renderable for PointLight {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PointLightUniform {
+pub(crate) struct PointLightUniform {
     position: [f32; 3],
     _padding0: u32,
     colour: [f32; 4],
@@ -47,7 +47,7 @@ impl PointLightUniform {
     }
 }
 
-/// Initial direction is directly downwards (-Y)
+/// Without identity transform, light source comes from above pointing directly downwards
 pub struct DirectionalLight(pub Rgba);
 
 impl DirectionalLight {
@@ -77,7 +77,7 @@ impl Renderable for DirectionalLight {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct DirectionalLightUniform {
+pub(crate) struct DirectionalLightUniform {
     direction: [f32; 3],
     _padding0: u32,
     colour: [f32; 4],
@@ -86,10 +86,49 @@ pub struct DirectionalLightUniform {
 impl DirectionalLightUniform {
     pub fn new(transform: &Transform, colour: Rgba) -> DirectionalLightUniform {
         let rotation = transform.global_matrix().to_scale_rotation_translation().1;
-        let direction = rotation * glam::Vec3::NEG_Y;
+        let direction = rotation * glam::Vec3::Y;
         DirectionalLightUniform {
             direction: direction.into(),
             _padding0: 0,
+            colour: colour.into(),
+        }
+    }
+}
+
+pub struct AmbientLight(pub Rgba);
+
+impl AmbientLight {
+    pub fn new(colour: Rgba) -> AmbientLight {
+        AmbientLight(colour)
+    }
+}
+
+impl AsAny for AmbientLight {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+}
+
+impl Component for AmbientLight {
+    fn as_renderable(&self) -> Option<&dyn Renderable> { Some(self) }
+}
+
+impl Renderable for AmbientLight {
+    fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, _resources: &mut Resources) -> Vec<RenderInput> {
+        let uniform = AmbientLightUniform::new(self.0);
+        
+        vec![RenderInput::SceneInput("ambient_lights".into(), SceneInputItem::new(uniform))]
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct AmbientLightUniform {
+    colour: [f32; 4],
+}
+
+impl AmbientLightUniform {
+    pub fn new(colour: Rgba) -> AmbientLightUniform {
+        AmbientLightUniform {
             colour: colour.into(),
         }
     }

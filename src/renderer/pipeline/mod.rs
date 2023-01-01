@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{path::Path, io::{BufReader, BufRead}, vec};
 
-use crate::{resource::{Texture, CubeMap, Material, Resources, Handle}};
+use crate::{resource::{Texture, CubeMap, Material, Handle}};
 
 use super::{Renderer, VertexLayoutType, PositionVertex, Vertex, ModelVertex, UniformBuffer, StorageBuffer};
 
@@ -32,11 +32,11 @@ impl Shader {
             
             for input in &shader_inputs {
                 let binding_types = match input.layout() {
-                    BufferBindingType::Material => Material::binding_types(),
-                    BufferBindingType::Texture => Texture::binding_types(),
-                    BufferBindingType::CubeMap => CubeMap::binding_types(),
-                    BufferBindingType::Uniform => vec![UniformBuffer::binding_type()],
-                    BufferBindingType::Storage => StorageBuffer::binding_types(),
+                    BindingResourceType::Material => Material::binding_types(),
+                    BindingResourceType::Texture => Texture::binding_types(),
+                    BindingResourceType::CubeMap => CubeMap::binding_types(),
+                    BindingResourceType::Uniform => vec![UniformBuffer::binding_type()],
+                    BindingResourceType::Storage => StorageBuffer::binding_types(),
                 };
                 
                 for binding_type in binding_types {
@@ -83,10 +83,7 @@ impl Shader {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
-                    blend: Some(wgpu::BlendState {
-                        alpha: wgpu::BlendComponent::REPLACE,
-                        color: wgpu::BlendComponent::REPLACE,
-                    }),
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -136,8 +133,8 @@ impl Shader {
         log::trace!("Loading Pipeline {}", path.as_ref().to_str().unwrap());
         
         let resource: ShaderResource = ron::from_str(&std::fs::read_to_string(&path)
-            .map_err(|e| ShaderLoadError::IoError(e))?)
-            .map_err(|e| ShaderLoadError::ParseError(e))?;
+            .map_err(|err| ShaderLoadError::IoError(err))?)
+            .map_err(|err| ShaderLoadError::ParseError(err))?;
 
         let name = format!("{} Shader Module", &resource.name);
 
@@ -148,7 +145,7 @@ impl Shader {
         let shader = wgpu::ShaderModuleDescriptor {
             label: Some(&name),
             source: wgpu::ShaderSource::Wgsl(
-                std::fs::read_to_string(shader_path).map_err(|e| ShaderLoadError::IoError(e))?.into()
+                preprocess_wgsl(shader_path)?.into()
             ),
         };
 
@@ -170,7 +167,7 @@ pub struct ShaderResource {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum BufferBindingType {
+pub enum BindingResourceType {
     Material, // many bindings, see material
     Texture, // 0: texture, 1: sampler
     CubeMap, // 0: cubemap, 1: sampler
@@ -189,27 +186,32 @@ pub enum BufferBindingType {
 pub(crate) enum ShaderInput {
     MeshMaterial,
     Node {
-        layout: BufferBindingType,
-        bind_group: String,
+        ty: BindingResourceType,
+        res: String,
     },
-    Global {
-        layout: BufferBindingType,
-        resource: String,
-        bind_group: String,
+    GlobalNode {
+        ty: BindingResourceType,
+        node: String,
+        res: String,
     },
     Scene {
         // layout: BindGroupLayoutType,
         collection: String,
     },
+    Resource {
+        ty: BindingResourceType,
+        res: String,
+    },
 }
 
 impl ShaderInput {
-    pub fn layout(&self) -> BufferBindingType {
+    pub fn layout(&self) -> BindingResourceType {
         match self {
-            ShaderInput::MeshMaterial => BufferBindingType::Material,
-            ShaderInput::Node { layout, .. } => *layout,
-            ShaderInput::Global { layout, .. } => *layout,
-            ShaderInput::Scene { .. } => BufferBindingType::Storage,
+            ShaderInput::MeshMaterial => BindingResourceType::Material,
+            ShaderInput::Node { ty, .. } => *ty,
+            ShaderInput::GlobalNode { ty, .. } => *ty,
+            ShaderInput::Scene { .. } => BindingResourceType::Storage,
+            ShaderInput::Resource { ty, .. } => *ty,
             // ShaderInput::Scene { layout, .. } => *layout,
         }
     }
@@ -240,4 +242,64 @@ impl std::error::Error for ShaderLoadError {}
 pub enum BindingHolder {
     Buffer(Handle<wgpu::Buffer>),
     Texture(Handle<wgpu::TextureView>, Handle<wgpu::Sampler>),
+}
+
+fn preprocess_wgsl<P: AsRef<Path>>(path: P) -> Result<String, ShaderLoadError> {
+    fn preprocess_internal<P: AsRef<Path>>(path: P, current_binding: &mut u32, collapse: bool) -> Result<String, ShaderLoadError> {
+        fn get_args<'a, T: serde::Deserialize<'a>>(line: &'a str, command: &str) -> Result<Option<T>, ()> {
+            if !line.starts_with("//!") {
+                return Ok(None);
+            }
+
+            let line = &line[3..];
+            
+            let end_index = line[0..].find(|c| match c {
+                // find first non-alphanumeric (and not underscore)
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => false,
+                _ => true,
+            }).unwrap_or(line.len());
+
+            if &line[0..end_index] == command {
+                match ron::from_str(line[end_index..].trim()).map_err(|_| ()) {
+                    Ok(args) => Ok(Some(args)),
+                    Err(_) => Err(()),
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    
+        let file = std::fs::File::open(path.as_ref()).map_err(|err| ShaderLoadError::IoError(err))?;
+        let reader = BufReader::new(file);
+    
+        let mut lines = vec![];
+    
+        for (i, line) in reader.lines().enumerate() {
+            let line = line.unwrap().trim().to_owned();
+
+            let error_msg = format!("Invalid macro args on line {} of file '{}'.", i+1, path.as_ref().to_string_lossy());
+    
+            let line = if let Some((include_path,)) = get_args::<(String,)>(&line, "include").expect(&error_msg) {
+                let path = Path::new(path.as_ref()).parent().unwrap_or(&Path::new("./")).join(include_path);
+                
+                let line = preprocess_internal(path, current_binding, true)?;
+
+                line
+            } else if let Some(_) = get_args::<()>(&line, "binding").expect(&error_msg) {
+                let line = format!("@group(0) @binding({})", current_binding);
+                *current_binding += 1;
+                line
+            } else if line.starts_with("//") { // remove comment lines
+                "".into()
+            } else {
+                line
+            };
+            
+            lines.push(line);
+        }
+    
+        Ok(lines.join(if collapse { " " } else { "\n" }))
+    }
+
+    preprocess_internal(path, &mut 0, false)
 }

@@ -3,19 +3,22 @@ ShaderResource (
     inputs: [
         MeshMaterial,
         Node (
-            layout: Uniform,
-            bind_group: "transform",
+            ty: Uniform,
+            res: "transform",
         ),
-        Global (
-            layout: Uniform,
-            resource: "current_camera",
-            bind_group: "camera",
+        GlobalNode (
+            ty: Uniform,
+            node: "current_camera",
+            res: "camera",
         ),
         Scene (
             collection: "point_lights",
         ),
         Scene (
             collection: "directional_lights",
+        ),
+        Scene (
+            collection: "ambient_lights",
         ),
         
     ],

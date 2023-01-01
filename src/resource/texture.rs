@@ -5,10 +5,10 @@ use crate::renderer::{Renderer, BindingHolder};
 use super::{Handle, Resources};
 
 pub struct Texture {
-    pub texture: wgpu::Texture,
-    pub view: Handle<wgpu::TextureView>,
-    pub sampler: Handle<wgpu::Sampler>,
-    // bind_group: Handle<wgpu::BindGroup>,
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) size: glam::UVec2,
+    pub(crate) view: Handle<wgpu::TextureView>,
+    pub(crate) sampler: Handle<wgpu::Sampler>,
 }
 
 impl Texture {
@@ -32,22 +32,6 @@ impl Texture {
         let texture = device.create_texture(&desc);
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
-        // let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        //     address_mode_u: wgpu::AddressMode::ClampToEdge,
-        //     address_mode_v: wgpu::AddressMode::ClampToEdge,
-        //     address_mode_w: wgpu::AddressMode::ClampToEdge,
-        //     mag_filter: wgpu::FilterMode::Linear,
-        //     min_filter: wgpu::FilterMode::Linear,
-        //     mipmap_filter: wgpu::FilterMode::Nearest,
-        //     compare: Some(wgpu::CompareFunction::LessEqual),
-        //     lod_min_clamp: -100.0,
-        //     lod_max_clamp: 100.0,
-        //     ..Default::default()
-        // });
-
-        // let view = resources.store(view);
-        // let sampler = resources.store(sampler);
 
         view
     }
@@ -57,10 +41,11 @@ impl Texture {
         resources: &mut Resources,
         bytes: &[u8],
         label: Option<&str>,
-        srgb: bool,
+        // srgb: bool,
+        flip_y: bool,
     ) -> Result<Texture, image::ImageError> {
         let img = image::load_from_memory(bytes)?;
-        Ok(Texture::from_image(renderer, resources, &img, label, srgb))
+        Ok(Texture::from_image(renderer, resources, &img, label, flip_y))
     }
 
     pub fn from_image(
@@ -68,43 +53,53 @@ impl Texture {
         resources: &mut Resources,
         image: &image::DynamicImage,
         label: Option<&str>,
-        srgb: bool,
+        // srgb: bool,
+        flip_y: bool,
     ) -> Texture {
-        let (image_raw, dimensions, format) = {
+        let (image_raw, dimensions, format, bytes_per_pixel) = {
             use image::DynamicImage::*;
             match image {
                 ImageRgb8(_) => {
                     let dimensions = image.dimensions();
                     let raw = image.to_rgba8().to_vec();
-                    (raw, dimensions, if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm })
+                    // (raw, dimensions, if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm }, 4)
+                    (raw, dimensions, wgpu::TextureFormat::Rgba8Unorm, 4)
                 },
                 ImageRgba8(_) => {
                     let dimensions = image.dimensions();
                     let raw = image.to_rgba8().to_vec();
-                    (raw, dimensions, if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm })
+                    // (raw, dimensions, if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm }, 4)
+                    (raw, dimensions, wgpu::TextureFormat::Rgba8Unorm, 4)
                 },
                 ImageRgb16(_) => {
                     let dimensions = image.dimensions();
-                    let raw = bytemuck::cast_vec(image.to_rgba16().to_vec());
-                    (raw, dimensions, wgpu::TextureFormat::Rgba16Unorm)
+                    let raw = bytemuck::cast_slice(&image.to_rgba16().to_vec()).to_vec();
+                    (raw, dimensions, wgpu::TextureFormat::Rgba16Unorm, 8)
                 },
                 ImageRgba16(_) => {
                     let dimensions = image.dimensions();
-                    let raw = bytemuck::cast_vec(image.to_rgba16().to_vec());
-                    (raw, dimensions, wgpu::TextureFormat::Rgba16Unorm)
+                    let raw = bytemuck::cast_slice(&image.to_rgba16().to_vec()).to_vec();
+                    (raw, dimensions, wgpu::TextureFormat::Rgba16Unorm, 8)
                 },
+                // 32F converted to 16F due to filtering issues
                 ImageRgb32F(_) => {
                     let dimensions = image.dimensions();
-                    let raw = bytemuck::cast_vec(image.to_rgba32f().to_vec());
-                    (raw, dimensions, wgpu::TextureFormat::Rgba32Float)
+                    let raw = image.to_rgba32f().into_iter().flat_map(|f| half::f16::from_f32(*f).to_ne_bytes()).collect();
+                    (raw, dimensions, wgpu::TextureFormat::Rgba16Float, 8)
                 },
                 ImageRgba32F(_) => {
                     let dimensions = image.dimensions();
-                    let raw = bytemuck::cast_vec(image.to_rgba32f().to_vec());
-                    (raw, dimensions, wgpu::TextureFormat::Rgba32Float)
+                    let raw = image.to_rgba32f().into_iter().flat_map(|f| half::f16::from_f32(*f).to_ne_bytes()).collect();
+                    (raw, dimensions, wgpu::TextureFormat::Rgba16Float, 8)
                 },
                 _ => unimplemented!("invalid texture format"),
             }
+        };
+
+        let image_raw = if flip_y {
+            image_raw.chunks((bytes_per_pixel * dimensions.0) as usize).rev().flatten().map(|b| *b).collect::<Vec<_>>()
+        } else {
+            image_raw
         };
 
         let size = wgpu::Extent3d {
@@ -135,7 +130,7 @@ impl Texture {
             &image_raw,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
+                bytes_per_row: std::num::NonZeroU32::new(bytes_per_pixel * dimensions.0),
                 rows_per_image: std::num::NonZeroU32::new(dimensions.1),
             },
             size,
@@ -156,27 +151,12 @@ impl Texture {
 
         let view = resources.store(view);
         let sampler = resources.store(sampler);
-
-        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label,
-        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: wgpu::BindingResource::TextureView(&view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::Sampler(&sampler),
-        //         },
-        //     ],
-        // }));
         
         Texture {
             texture,
+            size: dimensions.into(),
             view,
             sampler,
-            // bind_group,
         }
     }
 
@@ -245,58 +225,14 @@ impl Texture {
 
         let view = resources.store(view);
         let sampler = resources.store(sampler);
-
-        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label,
-        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::Texture],
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: wgpu::BindingResource::TextureView(&view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::Sampler(&sampler),
-        //         },
-        //     ],
-        // }));
         
         Texture {
             texture,
+            size: glam::UVec2::ONE,
             view,
             sampler,
-            // bind_group,
         }
     }
-
-    // pub(crate) fn bind_group(&self) -> Handle<wgpu::BindGroup> {
-    //     self.bind_group.clone()
-    // }
-
-    // pub fn bind_group_layout_descriptor<'a>() -> wgpu::BindGroupLayoutDescriptor<'a> {
-    //     wgpu::BindGroupLayoutDescriptor {
-    //         entries: &[
-    //             // Diffuse Texture
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 0,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Texture {
-    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-    //                     view_dimension: wgpu::TextureViewDimension::D2,
-    //                     multisampled: false,
-    //                 },
-    //                 count: None,
-    //             },
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 1,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-    //                 count: None,
-    //             },
-    //         ],
-    //         label: None,
-    //     }
-    // }
 
     pub(crate) fn binding_types() -> Vec<wgpu::BindingType> {
         vec![

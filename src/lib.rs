@@ -305,17 +305,17 @@ impl EngineState {
                                 let resource = mesh.material.as_ref().expect("Shader MeshMaterial input not present, mesh does not have material.");
                                 let material = self.resources.get(resource).expect("Shader MeshMaterial input failed, mesh holds invalid handle.");
                                 
-                                resources.extend(material.binding_resources(&self.renderer, &self.resources))
+                                resources.extend(material.binding_resources(&self.resources))
                             }
-                            renderer::ShaderInput::Node { bind_group, .. } => {
-                                let resource = binding_resources.get(bind_group).expect(&format!("Shader input '{bind_group}' not present in node."));
+                            renderer::ShaderInput::Node { res, .. } => {
+                                let resource = binding_resources.get(res).expect(&format!("Shader input '{res}' not present in node."));
                                 
                                 resources.push(resource.clone())
                             },
-                            renderer::ShaderInput::Global { resource, bind_group, .. } => {
-                                let node_id = self.resources.get_global::<node::NodeId>(resource).expect(&format!("Failed to get global shader input '{resource}.{bind_group}'. No such global NodeId resource '{resource}' exists."));
-                                let node_data = extracted_nodes.get(node_id).expect(&format!("Failed to get global shader input '{resource}.{bind_group}'. No Node exists with NodeId as specified in global resource '{resource}'."));
-                                let resource = node_data.binding_resources.get(bind_group).expect(&format!("Failed to get global shader input '{resource}.{bind_group}'. The node at '{resource}' does not have bind group '{bind_group}'."));
+                            renderer::ShaderInput::GlobalNode { node, res, .. } => {
+                                let node_id = self.resources.get_global::<node::NodeId>(node).expect(&format!("Failed to get global shader input '{node}.{res}'. No such global NodeId resource '{node}' exists."));
+                                let node_data = extracted_nodes.get(node_id).expect(&format!("Failed to get global shader input '{node}.{res}'. No Node exists with NodeId as specified in global resource '{node}'."));
+                                let resource = node_data.binding_resources.get(res).expect(&format!("Failed to get global shader input '{node}.{res}'. The node at '{node}' does not have binding resource '{res}'."));
                                 
                                 resources.push(resource.clone())
                             },
@@ -325,6 +325,30 @@ impl EngineState {
                                 let resource = scene_data.get(collection).unwrap_or(&empty_storage_buffer);
                                 
                                 resources.extend(resource.clone());
+                            },
+                            renderer::ShaderInput::Resource { ty, res } => {
+                                match ty {
+                                    renderer::BindingResourceType::Material => {
+                                        let resource = self.resources.get_global::<resource::Material>(res).expect(&format!("Material resource '{res}' could not be found, required by shader."));
+                                        resources.extend(resource.binding_resources(&self.resources));
+                                    },
+                                    renderer::BindingResourceType::Texture => {
+                                        let resource = self.resources.get_global::<resource::Texture>(res).expect(&format!("Texture resource '{res}' could not be found, required by shader."));
+                                        resources.push(resource.binding_resource());
+                                    },
+                                    renderer::BindingResourceType::CubeMap => {
+                                        let resource = self.resources.get_global::<resource::CubeMap>(res).expect(&format!("Cubemap resource '{res}' could not be found, required by shader."));
+                                        resources.push(resource.binding_resource());
+                                    },
+                                    renderer::BindingResourceType::Uniform => {
+                                        let resource = self.resources.get_global::<renderer::UniformBuffer>(res).expect(&format!("Uniform buffer resource '{res}' could not be found, required by shader."));
+                                        resources.push(resource.binding_resource());
+                                    },
+                                    renderer::BindingResourceType::Storage => {
+                                        let resource = self.resources.get_global::<renderer::StorageBuffer>(res).expect(&format!("Storage buffer resource '{res}' could not be found, required by shader."));
+                                        resources.extend(resource.binding_resources());
+                                    },
+                                }
                             },
                         };
         
@@ -392,7 +416,7 @@ impl EngineState {
         let output = self.renderer.window.surface.get_current_texture()?;
 
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
+        
         let mut encoder = self.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
