@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, borrow::Cow};
+use std::num::NonZeroU32;
 
 use image::GenericImageView;
 
@@ -367,9 +367,5 @@ impl Texture {
 
     pub(crate) fn binding_resource(&self) -> BindingHolder {
         BindingHolder::Texture(self.view.clone())
-    }
-
-    fn generate_mipmaps(&mut self) {
-        
     }
 }

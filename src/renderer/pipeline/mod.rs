@@ -15,8 +15,6 @@ impl Shader {
         renderer: &Renderer,
         name: &str,
         shader_inputs: Vec<ShaderInput>,
-        colour_format: wgpu::TextureFormat,
-        depth_format: Option<wgpu::TextureFormat>,
         vertex_type: VertexLayoutType,
         shader: wgpu::ShaderModuleDescriptor,
     ) -> Shader {
@@ -94,7 +92,7 @@ impl Shader {
         let colour_format = renderer.window.config.format;
         let depth_format = Some(Texture::DEPTH_FORMAT);
 
-        Ok(Shader::new(renderer, &resource.name, resource.inputs, colour_format, depth_format, resource.vertex_type, shader))
+        Ok(Shader::new(renderer, &resource.name, resource.inputs, resource.vertex_type, shader))
     }
 
     pub(crate) fn prepare_pipeline(&mut self, renderer: &Renderer, index: PipelineProperties) {
