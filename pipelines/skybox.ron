@@ -1,9 +1,13 @@
 ShaderResource (
     name: "skybox",
     inputs: [
-        Node (
-            ty: CubeMap,
-            res: "cubemap",
+        // Node (
+        //     ty: CubeMap,
+        //     res: "cubemap",
+        // ),
+        Resource (
+            ty: CubeSampler,
+            res: "tritium::skybox",
         ),
         GlobalNode (
             ty: Uniform,

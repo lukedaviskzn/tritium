@@ -36,12 +36,14 @@ impl UniformBuffer {
         }
     }
 
-    pub(crate) fn binding_type() -> wgpu::BindingType {
-        wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        }
+    pub(crate) fn binding_types() -> Vec<wgpu::BindingType> {
+        vec![
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            }
+        ]
     }
 
     pub(crate) fn binding_resource(&self) -> BindingHolder {

@@ -7,11 +7,11 @@ struct CameraUniform {
 
 //!include("includes/tonemapping.wgsl")
 
-@group(0) @binding(0)
+//!binding()
 var skybox_texture: texture_cube<f32>;
-@group(0) @binding(1)
+//!binding()
 var skybox_sampler: sampler;
-@group(0) @binding(2)
+//!binding()
 var<uniform> camera: CameraUniform;
 
 // Vertex Shader

@@ -1,20 +1,20 @@
 use image::GenericImageView;
 
-use crate::{renderer::{Renderer, RenderInput, RenderableResource, BindingHolder}, node::NodeDescriptor};
+use crate::{renderer::{Renderer, RenderInput, RenderableResource, BindingHolder}, node::NodeDescriptor, resource::Texture};
 
 use super::{Resources, Handle};
 
 pub struct CubeMap {
     pub texture: wgpu::Texture,
     pub view: Handle<wgpu::TextureView>,
-    pub sampler: Handle<wgpu::Sampler>,
+    // pub sampler: Handle<wgpu::Sampler>,
     // bind_group: Handle<wgpu::BindGroup>,
 }
 
 impl CubeMap {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    /// From 2x1 equirectangular image
+    /// From 2x1 equirectangular image, 2048x1024 texture will result in 512x512x6 cubemap. (cubemap width = source width / 4, cubemap height = source height / 2)
     pub fn from_equirectangular(
         renderer: &Renderer,
         resources: &mut Resources,
@@ -60,32 +60,38 @@ impl CubeMap {
             }
         };
 
+        // let format = match format {
+        //     wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+        //     wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+        //     _ => format,
+        // };
+
         // let image_raw = image_raw.chunks((bytes_per_pixel * dimensions.0) as usize).rev().flatten().map(|b| *b).collect::<Vec<_>>();
         
         let size = wgpu::Extent3d {
-            width: dimensions.0 / 2,
-            height: dimensions.1 / 1,
+            width: dimensions.0 / 4,
+            height: dimensions.1 / 2,
             depth_or_array_layers: 6,
         };
-
-        let desc = wgpu::TextureDescriptor {
+        
+        let mip_level_count = ((size.width as f32).log2().max((size.height as f32).log2()).ceil() as u32).max(1);
+        
+        let cubemap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        };    
-        
-        let texture = renderer.device.create_texture(&desc);
+        });
 
         // (dir, tangent, bitangent)
         let cubemap_dirs = [
             (glam::Vec3::X, glam::Vec3::NEG_Z, glam::Vec3::Y),
             (glam::Vec3::NEG_X, glam::Vec3::Z, glam::Vec3::Y),
-            (glam::Vec3::NEG_Y, glam::Vec3::X, glam::Vec3::Z),
             (glam::Vec3::Y, glam::Vec3::X, glam::Vec3::NEG_Z),
+            (glam::Vec3::NEG_Y, glam::Vec3::X, glam::Vec3::Z),
             (glam::Vec3::Z, glam::Vec3::X, glam::Vec3::Y),
             (glam::Vec3::NEG_Z, glam::Vec3::NEG_X, glam::Vec3::Y),
         ];
@@ -118,52 +124,83 @@ impl CubeMap {
                     face_bytes.extend(chunk);
                 }
             }
+        
+            let face_texture = Texture::from_bytes(renderer, resources, &face_bytes, (size.width, size.height), format, None, srgb);
 
-            renderer.queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    aspect: wgpu::TextureAspect::All,
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: i as u32,
+            let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            
+            for mip in 0..mip_level_count {
+                encoder.copy_texture_to_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &face_texture.texture,
+                        mip_level: mip,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
                     },
-                },
-                &face_bytes,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: std::num::NonZeroU32::new(bytes_per_pixel * size.width),
-                    rows_per_image: std::num::NonZeroU32::new(size.height),
-                },
-                wgpu::Extent3d {
-                    width: size.width,
-                    height: size.height,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    wgpu::ImageCopyTexture {
+                        texture: &cubemap_texture,
+                        mip_level: mip,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: i as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: size.width / 2_u32.pow(mip),
+                        height: size.height / 2_u32.pow(mip),
+                        depth_or_array_layers: 1,
+                    }
+                );
+            }
+            renderer.queue.submit(std::iter::once(encoder.finish()));
+
+            // renderer.queue.write_texture(
+            //     wgpu::ImageCopyTexture {
+            //         aspect: wgpu::TextureAspect::All,
+            //         texture: &cubemap_texture,
+            //         mip_level: 0,
+            //         origin: wgpu::Origin3d {
+            //             x: 0,
+            //             y: 0,
+            //             z: i as u32,
+            //         },
+            //     },
+            //     &face_bytes,
+            //     wgpu::ImageDataLayout {
+            //         offset: 0,
+            //         bytes_per_row: std::num::NonZeroU32::new(bytes_per_pixel * size.width),
+            //         rows_per_image: std::num::NonZeroU32::new(size.height),
+            //     },
+            //     wgpu::Extent3d {
+            //         width: size.width,
+            //         height: size.height,
+            //         depth_or_array_layers: 1,
+            //     },
+            // );
         }
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        let view = cubemap_texture.create_view(&wgpu::TextureViewDescriptor {
             label,
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
 
-        let sampler = renderer.device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            }
-        );
+        // let sampler = renderer.device.create_sampler(
+        //     &wgpu::SamplerDescriptor {
+        //         address_mode_u: wgpu::AddressMode::ClampToEdge,
+        //         address_mode_v: wgpu::AddressMode::ClampToEdge,
+        //         address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //         mag_filter: wgpu::FilterMode::Linear,
+        //         min_filter: wgpu::FilterMode::Nearest,
+        //         mipmap_filter: wgpu::FilterMode::Nearest,
+        //         ..Default::default()
+        //     }
+        // );
 
         let view = resources.store(view);
-        let sampler = resources.store(sampler);
+        // let sampler = resources.store(sampler);
 
         // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
         //     label,
@@ -181,9 +218,9 @@ impl CubeMap {
         // }));
         
         Ok(CubeMap {
-            texture,
+            texture: cubemap_texture,
             view,
-            sampler,
+            // sampler,
             // bind_group,
         })
     }
@@ -339,25 +376,25 @@ impl CubeMap {
             ..Default::default()
         });
 
-        let sampler = renderer.device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            }
-        );
+        // let sampler = renderer.device.create_sampler(
+        //     &wgpu::SamplerDescriptor {
+        //         address_mode_u: wgpu::AddressMode::ClampToEdge,
+        //         address_mode_v: wgpu::AddressMode::ClampToEdge,
+        //         address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //         mag_filter: wgpu::FilterMode::Linear,
+        //         min_filter: wgpu::FilterMode::Nearest,
+        //         mipmap_filter: wgpu::FilterMode::Nearest,
+        //         ..Default::default()
+        //     }
+        // );
 
         let view = resources.store(view);
-        let sampler = resources.store(sampler);
+        // let sampler = resources.store(sampler);
 
         Ok(CubeMap {
             texture,
             view,
-            sampler,
+            // sampler,
             // bind_group,
         })
     }
@@ -374,13 +411,14 @@ impl CubeMap {
     }
 
     pub(crate) fn binding_resource(&self) -> BindingHolder {
-        BindingHolder::Texture(self.view.clone(), self.sampler.clone())
+        BindingHolder::Texture(self.view.clone())
+        // BindingHolder::Sampler(self.sampler.clone()),
     }
 }
 
 impl RenderableResource for CubeMap {
     fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, _resources: &Resources) -> Vec<RenderInput> {
-        vec![RenderInput::BindingResources("cubemap".into(), self.binding_resource())]
+        vec![RenderInput::BindingResources("cubemap".into(), vec![self.binding_resource()])]
     }
 }
 

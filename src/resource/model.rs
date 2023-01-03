@@ -4,6 +4,14 @@ use crate::{renderer::{Vertex, Renderer, RenderInput, RenderableResource, Positi
 
 use super::{Material, Handle, Resources};
 
+pub enum SphereUV {
+    Equirectangular,
+    /// Repeat texture on back
+    Equirectangular2X,
+    /// Use same tex coords for each face
+    Cube,
+}
+
 pub struct Model {
     pub meshes: Vec<Mesh>,
     // pub materials: Vec<Material>,
@@ -147,8 +155,16 @@ impl Model {
         model
     }
 
-    pub fn new_sphere(renderer: &Renderer, resources: &mut Resources, material: Option<Handle<Material>>, subdivisions: u32) -> Model {
-        // let subdivisions = 4;
+    pub fn new_sphere(renderer: &Renderer, resources: &mut Resources, material: Option<Handle<Material>>, subdivisions: u32, sphere_uvs: SphereUV) -> Model {
+        // todo: fix seam on left side of sphere
+        
+        fn spherical_to_equirectangular(v: glam::Vec3) -> glam::Vec2 {
+            let mut uv = glam::vec2(f32::atan2(v.z, v.x), f32::asin(v.y));
+            let inv_atan = glam::vec2(0.1591, 0.3183);
+            uv *= inv_atan;
+            uv += 0.5;
+            return uv;
+        }
         
         // (dir, tangent, bitangent)
         let dirs = [
@@ -175,7 +191,12 @@ impl Model {
                     if use_model_vertices {
                         model_vertices.push(ModelVertex {
                             position: pos,
-                            tex_coords: glam::vec2(x as f32 / subdivisions as f32, y as f32 / subdivisions as f32),
+                            // tex_coords: glam::vec2(x as f32 / subdivisions as f32, y as f32 / subdivisions as f32),
+                            tex_coords: match sphere_uvs {
+                                SphereUV::Equirectangular => spherical_to_equirectangular(pos),
+                                SphereUV::Equirectangular2X => spherical_to_equirectangular(pos) * glam::vec2(2.0, 1.0),
+                                SphereUV::Cube => glam::vec2(x as f32 / subdivisions as f32, y as f32 / subdivisions as f32),
+                            },
                             normal: pos,
                             tangent: glam::Vec3::ZERO,
                             bitangent: glam::Vec3::ZERO,
@@ -259,7 +280,7 @@ impl Mesh {
 }
 
 impl RenderableResource for Model {
-    fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, resources: &Resources) -> Vec<RenderInput> {
+    fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, _resources: &Resources) -> Vec<RenderInput> {
         let mut inputs = vec![];
 
         for mesh in &self.meshes {

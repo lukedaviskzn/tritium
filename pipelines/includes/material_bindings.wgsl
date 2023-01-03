@@ -1,3 +1,8 @@
+struct AlphaMode {
+    blended: u32,
+    cutoff: f32,
+}
+
 struct Material {
     albedo: vec4<f32>,
     metallic: f32,
@@ -7,6 +12,9 @@ struct Material {
 }
 
 //!binding()
+var<uniform> alpha_mode: AlphaMode;
+
+//!binding()
 var albedo_texture: texture_2d<f32>;
 //!binding()
 var albedo_sampler: sampler;
@@ -14,11 +22,15 @@ var albedo_sampler: sampler;
 var<uniform> albedo: vec4<f32>;
 
 //!binding()
-var metallic_roughness_texture: texture_2d<f32>;
+var metallic_texture: texture_2d<f32>;
 //!binding()
-var metallic_roughness_sampler: sampler;
+var metallic_sampler: sampler;
 //!binding()
 var<uniform> metallic_factor: f32;
+//!binding()
+var roughness_texture: texture_2d<f32>;
+//!binding()
+var roughness_sampler: sampler;
 //!binding()
 var<uniform> roughness_factor: f32;
 

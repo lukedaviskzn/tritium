@@ -1,4 +1,4 @@
-use std::{collections::HashMap, any::TypeId};
+use std::{any::TypeId};
 
 use winit::window::Window;
 
@@ -12,7 +12,7 @@ pub use window::*;
 pub use uniform::*;
 pub use vertex::*;
 
-use crate::{resource::{Material, Handle, Texture, CubeMap, Resources, Mesh}, node::{NodeDescriptor, Node, Component}, util::AsAny};
+use crate::{resource::{Material, Handle, Texture, Resources}, node::{NodeDescriptor, Component}, util::AsAny};
 
 pub struct Renderer {
     pub(crate) device: wgpu::Device,
@@ -92,6 +92,8 @@ pub(crate) struct QueuedRenderObject {
     pub index_buffer: Handle<wgpu::Buffer>,
     pub bind_group: wgpu::BindGroup,
     pub num_indices: u32,
+    pub transparent: bool,
+    pub double_sided: bool,
 }
 
 // #[derive(Debug, Clone)]
@@ -103,7 +105,7 @@ pub enum RenderInput {
         material: Option<Handle<Material>>,
         num_elements: u32,
     },
-    BindingResources(String, BindingHolder),
+    BindingResources(String, Vec<BindingHolder>),
     SceneInput(String, SceneInputItem),
 }
 

@@ -1,11 +1,11 @@
-use std::{path::Path, io::{BufReader, BufRead}, vec};
+use std::{path::Path, io::{BufReader, BufRead}, vec, collections::HashMap};
 
-use crate::{resource::{Texture, CubeMap, Material, Handle}};
+use crate::{resource::{Texture, CubeMap, Material, Handle, Sampler, CubeSampler}};
 
 use super::{Renderer, VertexLayoutType, PositionVertex, Vertex, ModelVertex, UniformBuffer, StorageBuffer};
 
 pub struct Shader {
-    pub(crate) pipeline: wgpu::RenderPipeline,
+    pipelines: PipelineCache,
     pub(crate) inputs: Vec<ShaderInput>,
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
 }
@@ -13,18 +13,13 @@ pub struct Shader {
 impl Shader {
     fn new(
         renderer: &Renderer,
-        // device: &wgpu::Device,
         name: &str,
         shader_inputs: Vec<ShaderInput>,
-        // layout: &wgpu::PipelineLayout,
-        color_format: wgpu::TextureFormat,
+        colour_format: wgpu::TextureFormat,
         depth_format: Option<wgpu::TextureFormat>,
         vertex_type: VertexLayoutType,
-        // vertex_layouts: &[wgpu::VertexBufferLayout],
-        // bind_group_layouts: &HashMap<BindGroupLayoutType, wgpu::BindGroupLayout>,
         shader: wgpu::ShaderModuleDescriptor,
     ) -> Shader {
-        let shader = renderer.device.create_shader_module(shader);
 
         let bind_group_layout_entries = {
             let mut bind_group_layout_entries = vec![];
@@ -34,8 +29,10 @@ impl Shader {
                 let binding_types = match input.layout() {
                     BindingResourceType::Material => Material::binding_types(),
                     BindingResourceType::Texture => Texture::binding_types(),
+                    BindingResourceType::Sampler => Sampler::binding_types(),
                     BindingResourceType::CubeMap => CubeMap::binding_types(),
-                    BindingResourceType::Uniform => vec![UniformBuffer::binding_type()],
+                    BindingResourceType::CubeSampler => CubeSampler::binding_types(),
+                    BindingResourceType::Uniform => UniformBuffer::binding_types(),
                     BindingResourceType::Storage => StorageBuffer::binding_types(),
                 };
                 
@@ -59,63 +56,8 @@ impl Shader {
             entries: bind_group_layout_entries.as_slice(),
         });
 
-        let layout = renderer.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(&format!("'{name}': pipeline layout")),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-    
-        let pipeline = renderer.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(&format!("'{name}': render pipeline")),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[
-                    match vertex_type {
-                        VertexLayoutType::Position => PositionVertex::desc(),
-                        VertexLayoutType::Model => ModelVertex::desc(),
-                    }
-                ],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
-                format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
-
         Shader {
-            pipeline,
+            pipelines: PipelineCache::new(renderer, vertex_type, shader),
             inputs: shader_inputs,
             bind_group_layout,
         }
@@ -154,12 +96,20 @@ impl Shader {
 
         Ok(Shader::new(renderer, &resource.name, resource.inputs, colour_format, depth_format, resource.vertex_type, shader))
     }
+
+    pub(crate) fn prepare_pipeline(&mut self, renderer: &Renderer, index: PipelineProperties) {
+        self.pipelines.prepare_pipeline(renderer, index, &self.bind_group_layout)
+    }
+
+    pub(crate) fn get_pipeline(&self, index: PipelineProperties) -> Option<&wgpu::RenderPipeline> {
+        self.pipelines.get_pipeline(index)
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct ShaderResource {
     name: String,
-    // color_format: wgpu::TextureFormat,
+    // colour_format: wgpu::TextureFormat,
     // depth_format: Option<wgpu::TextureFormat>,
     inputs: Vec<ShaderInput>,
     vertex_type: VertexLayoutType,
@@ -169,8 +119,10 @@ pub struct ShaderResource {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BindingResourceType {
     Material, // many bindings, see material
-    Texture, // 0: texture, 1: sampler
-    CubeMap, // 0: cubemap, 1: sampler
+    Texture,
+    Sampler,
+    CubeMap,
+    CubeSampler,
     Uniform, // any type
     Storage, // { len: u32, data: array<T> }
 }
@@ -202,6 +154,7 @@ pub(crate) enum ShaderInput {
         ty: BindingResourceType,
         res: String,
     },
+    Manual(BindingResourceType),
 }
 
 impl ShaderInput {
@@ -212,6 +165,7 @@ impl ShaderInput {
             ShaderInput::GlobalNode { ty, .. } => *ty,
             ShaderInput::Scene { .. } => BindingResourceType::Storage,
             ShaderInput::Resource { ty, .. } => *ty,
+            ShaderInput::Manual(ty) => *ty,
             // ShaderInput::Scene { layout, .. } => *layout,
         }
     }
@@ -241,7 +195,108 @@ impl std::error::Error for ShaderLoadError {}
 #[derive(Debug, Clone)]
 pub enum BindingHolder {
     Buffer(Handle<wgpu::Buffer>),
-    Texture(Handle<wgpu::TextureView>, Handle<wgpu::Sampler>),
+    Texture(Handle<wgpu::TextureView>),
+    Sampler(Handle<wgpu::Sampler>),
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) struct PipelineProperties {
+    pub transparent: bool,
+    pub double_sided: bool,
+    pub colour_format: wgpu::TextureFormat,
+    pub depth_format: Option<wgpu::TextureFormat>,
+}
+
+pub(crate) struct PipelineCache {
+    pipelines: HashMap<PipelineProperties, wgpu::RenderPipeline>,
+    shader: wgpu::ShaderModule,
+    vertex_type: VertexLayoutType,
+}
+
+impl PipelineCache {
+    pub fn new<'a>(
+        renderer: &Renderer,
+        vertex_type: VertexLayoutType,
+        shader: wgpu::ShaderModuleDescriptor,
+    ) -> PipelineCache {
+        let shader = renderer.device.create_shader_module(shader);
+
+        PipelineCache {
+            pipelines: hashmap!{},
+            shader,
+            vertex_type,
+        }
+    }
+
+    pub fn prepare_pipeline(&mut self, renderer: &Renderer, index: PipelineProperties, bind_group_layout: &wgpu::BindGroupLayout) {
+        let cull_mode = if index.double_sided {
+            None
+        } else {
+            Some(wgpu::Face::Back)
+        };
+        
+        let depth_write_enabled = !index.transparent;
+        
+        let layout = renderer.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        let pipeline = renderer.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &self.shader,
+                entry_point: "vs_main",
+                buffers: &match self.vertex_type {
+                    VertexLayoutType::Position => vec![PositionVertex::desc()],
+                    VertexLayoutType::Model => vec![ModelVertex::desc()],
+                    VertexLayoutType::None => vec![],
+                },
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: index.colour_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode,
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: index.depth_format.map(|format| wgpu::DepthStencilState {
+                format,
+                depth_write_enabled,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
+        self.pipelines.insert(index, pipeline);
+    }
+
+    pub fn get_pipeline(&self, index: PipelineProperties) -> Option<&wgpu::RenderPipeline> {
+        self.pipelines.get(&index)
+    }
 }
 
 fn preprocess_wgsl<P: AsRef<Path>>(path: P) -> Result<String, ShaderLoadError> {

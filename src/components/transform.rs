@@ -26,15 +26,15 @@ impl Transform {
         }
     }
 
-    pub fn from_tranlation(translation: glam::Vec3) -> Transform {
+    pub fn from_translation(translation: glam::Vec3) -> Transform {
         Transform::new(translation, glam::Quat::IDENTITY, glam::Vec3::ONE)
     }
 
-    pub fn from_tranlation_rotation(translation: glam::Vec3, rotation: glam::Quat) -> Transform {
+    pub fn from_translation_rotation(translation: glam::Vec3, rotation: glam::Quat) -> Transform {
         Transform::new(translation, rotation, glam::Vec3::ONE)
     }
 
-    pub fn from_tranlation_scale(translation: glam::Vec3, scale: glam::Vec3) -> Transform {
+    pub fn from_translation_scale(translation: glam::Vec3, scale: glam::Vec3) -> Transform {
         Transform::new(translation, glam::Quat::IDENTITY, scale)
     }
 
@@ -88,7 +88,7 @@ impl Renderable for Transform {
         // vec![RenderInput::new("transform", RenderInputStorage::BindGroup(uniform.bind_group()))]
         // vec![RenderInput::BindGroup("transform".into(), uniform)]
         // vec![RenderInput::UniformBuffer("transform".into(), uniform)]
-        vec![RenderInput::BindingResources("transform".into(), uniform.binding_resource())]
+        vec![RenderInput::BindingResources("transform".into(), vec![uniform.binding_resource()])]
     }
 }
 

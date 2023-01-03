@@ -62,7 +62,7 @@ impl Renderable for Camera {
         // vec![RenderInput::new("camera", RenderInputStorage::BindGroup(uniform.bind_group()))]
         // vec![RenderInput::BindGroup("camera".into(), uniform.bind_group())]
         // vec![RenderInput::UniformBuffer("camera".into(), uniform)]
-        vec![RenderInput::BindingResources("camera".into(), uniform.binding_resource())]
+        vec![RenderInput::BindingResources("camera".into(), vec![uniform.binding_resource()])]
     }
 }
 

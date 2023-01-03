@@ -1,6 +1,7 @@
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VertexLayoutType {
+    None,
     Position,
     Model,
 }

@@ -81,14 +81,14 @@ impl EngineState {
                 DeviceEvent::MouseMotion { delta } => {
                     if self.renderer.window.focused {
                         let delta = glam::vec2(delta.0 as f32, delta.1 as f32);
-                        self.resources.get_mut(&self.mouse_manager).expect("Lost handle to mouse manager.").update_delta(delta);
-                        self.resources.get_mut(&self.tick_mouse_manager).expect("Lost handle to mouse manager.").update_delta(delta);
+                        self.mouse_manager.get_mut(&mut self.resources).update_delta(delta);
+                        self.tick_mouse_manager.get_mut(&mut self.resources).update_delta(delta);
                     }
                 },
                 DeviceEvent::MouseWheel { delta } => {
                     if self.renderer.window.focused {
-                        self.resources.get_mut(&self.mouse_manager).expect("Lost handle to mouse manager.").update_scroll_delta(*delta);
-                        self.resources.get_mut(&self.tick_mouse_manager).expect("Lost handle to mouse manager.").update_scroll_delta(*delta);
+                        self.mouse_manager.get_mut(&mut self.resources).update_scroll_delta(*delta);
+                        self.tick_mouse_manager.get_mut(&mut self.resources).update_scroll_delta(*delta);
                     }
                 },
                 _ => {},
@@ -96,17 +96,17 @@ impl EngineState {
             Event::WindowEvent { window_id, event } => if *window_id == self.renderer.window.window.id() {
                 match event {
                     WindowEvent::KeyboardInput { input, .. } => {
-                        self.resources.get_mut(&self.keyboard_manager).expect("Lost handle to keyboard manager.").input(input);
-                        self.resources.get_mut(&self.tick_keyboard_manager).expect("Lost handle to keyboard manager.").input(input);
+                        self.keyboard_manager.get_mut(&mut self.resources).input(input);
+                        self.tick_keyboard_manager.get_mut(&mut self.resources).input(input);
                     },
                     WindowEvent::MouseInput { state, button, .. } => {
-                        self.resources.get_mut(&self.mouse_manager).expect("Lost handle to mouse manager.").input(*state, *button);
-                        self.resources.get_mut(&self.tick_mouse_manager).expect("Lost handle to mouse manager.").input(*state, *button);
+                        self.mouse_manager.get_mut(&mut self.resources).input(*state, *button);
+                        self.tick_mouse_manager.get_mut(&mut self.resources).input(*state, *button);
                     },
                     WindowEvent::CursorMoved { position, .. } => {
                         let position = glam::vec2(position.x as f32, position.y as f32);
-                        self.resources.get_mut(&self.mouse_manager).expect("Lost handle to mouse manager.").update_position(position);
-                        self.resources.get_mut(&self.tick_mouse_manager).expect("Lost handle to mouse manager.").update_position(position);
+                        self.mouse_manager.get_mut(&mut self.resources).update_position(position);
+                        self.tick_mouse_manager.get_mut(&mut self.resources).update_position(position);
                     },
                     _ => {},
                 }
@@ -175,7 +175,7 @@ impl EngineState {
         struct ExtractedNode {
             shader: Option<resource::Handle<renderer::Shader>>,
             meshes: Vec<MeshInput>,
-            binding_resources: HashMap<String, renderer::BindingHolder>,
+            binding_resources: HashMap<String, Vec<renderer::BindingHolder>>,
         }
         
         // Inputs associated with individual nodes, i.e. Transform
@@ -223,7 +223,11 @@ impl EngineState {
                         //     node_data.bind_groups.insert(name.clone(), bind_group.clone());
                         // },
                         renderer::RenderInput::BindingResources(name, resources) => {
-                            node_data.binding_resources.insert(name, resources);
+                            if let Some(binding_resources) = node_data.binding_resources.get_mut(&name) {
+                                binding_resources.extend(resources);
+                            } else {
+                                node_data.binding_resources.insert(name, resources);
+                            }
                         },
                         renderer::RenderInput::SceneInput(name, item) => {
                             if let Some(data) = scene_data.get_mut(&name) {
@@ -282,7 +286,8 @@ impl EngineState {
             new_scene_data
         };
 
-        let mut queue = vec![];
+        let mut opaque_queue = vec![];
+        let mut transparent_queue = vec![];
 
         // let current_camera = self.resources.get_global::<world::NodeId>("current_camera").expect("Global resource 'current_camera' must be set to a valid NodeId with an attached Camera bundle.");
 
@@ -290,9 +295,12 @@ impl EngineState {
             if meshes.len() > 0 {
                 let shader_handle = shader.clone().expect("Failed to render mesh, no shader specified.");
                 let inputs = {
-                    let shader = self.resources.get(&shader_handle).expect("Invalid shader handle.");
+                    let shader = shader_handle.get(&self.resources);
                     shader.inputs.clone()
                 };
+
+                let mut double_sided = false;
+                let mut transparent = false;
 
                 for mesh in meshes {
                     // todo: a bit inefficient to recalculate order for each mesh
@@ -303,21 +311,24 @@ impl EngineState {
                         match input {
                             renderer::ShaderInput::MeshMaterial => {
                                 let resource = mesh.material.as_ref().expect("Shader MeshMaterial input not present, mesh does not have material.");
-                                let material = self.resources.get(resource).expect("Shader MeshMaterial input failed, mesh holds invalid handle.");
+                                let material = resource.get(&self.resources);
+
+                                double_sided = material.double_sided;
+                                transparent = material.alpha_mode == resource::AlphaMode::Blend;
                                 
                                 resources.extend(material.binding_resources(&self.resources))
                             }
                             renderer::ShaderInput::Node { res, .. } => {
                                 let resource = binding_resources.get(res).expect(&format!("Shader input '{res}' not present in node."));
                                 
-                                resources.push(resource.clone())
+                                resources.extend(resource.clone())
                             },
                             renderer::ShaderInput::GlobalNode { node, res, .. } => {
                                 let node_id = self.resources.get_global::<node::NodeId>(node).expect(&format!("Failed to get global shader input '{node}.{res}'. No such global NodeId resource '{node}' exists."));
                                 let node_data = extracted_nodes.get(node_id).expect(&format!("Failed to get global shader input '{node}.{res}'. No Node exists with NodeId as specified in global resource '{node}'."));
                                 let resource = node_data.binding_resources.get(res).expect(&format!("Failed to get global shader input '{node}.{res}'. The node at '{node}' does not have binding resource '{res}'."));
                                 
-                                resources.push(resource.clone())
+                                resources.extend(resource.clone())
                             },
                             renderer::ShaderInput::Scene { collection, .. } => {
                                 // let bind_group = scene_data.get(collection).unwrap_or(&empty_storage_buffer);
@@ -336,9 +347,17 @@ impl EngineState {
                                         let resource = self.resources.get_global::<resource::Texture>(res).expect(&format!("Texture resource '{res}' could not be found, required by shader."));
                                         resources.push(resource.binding_resource());
                                     },
+                                    renderer::BindingResourceType::Sampler => {
+                                        let resource = self.resources.get_global::<resource::Sampler>(res).expect(&format!("Sampler resource '{res}' could not be found, required by shader."));
+                                        resources.extend(resource.binding_resources(&self.resources));
+                                    },
                                     renderer::BindingResourceType::CubeMap => {
                                         let resource = self.resources.get_global::<resource::CubeMap>(res).expect(&format!("Cubemap resource '{res}' could not be found, required by shader."));
                                         resources.push(resource.binding_resource());
+                                    },
+                                    renderer::BindingResourceType::CubeSampler => {
+                                        let resource = self.resources.get_global::<resource::CubeSampler>(res).expect(&format!("Cube sampler resource '{res}' could not be found, required by shader."));
+                                        resources.extend(resource.binding_resources(&self.resources));
                                     },
                                     renderer::BindingResourceType::Uniform => {
                                         let resource = self.resources.get_global::<renderer::UniformBuffer>(res).expect(&format!("Uniform buffer resource '{res}' could not be found, required by shader."));
@@ -350,6 +369,7 @@ impl EngineState {
                                     },
                                 }
                             },
+                            renderer::ShaderInput::Manual(_) => panic!("Manual shader inputs are not permitted in standard shaders."),
                         };
         
                         ordered_binding_resources.extend(resources);
@@ -362,22 +382,23 @@ impl EngineState {
                         for resource in ordered_binding_resources {
                             match resource {
                                 renderer::BindingHolder::Buffer(buffer) => {
-                                    let binding = self.resources.get(&buffer).expect("Attempted to bind buffer with invalid handle.");
+                                    let binding = buffer.get(&self.resources);
                                     bind_group_entries.push(wgpu::BindGroupEntry {
                                         binding: current_binding,
                                         resource: binding.as_entire_binding(),
                                     });
                                     current_binding += 1;
                                 },
-                                renderer::BindingHolder::Texture(view, sampler) => {
-                                    let view = self.resources.get(&view).expect("Attempted to bind texture view with invalid handle.");
+                                renderer::BindingHolder::Texture(view) => {
+                                    let view = view.get(&self.resources);
                                     bind_group_entries.push(wgpu::BindGroupEntry {
                                         binding: current_binding,
                                         resource: wgpu::BindingResource::TextureView(view),
                                     });
                                     current_binding += 1;
-                                    
-                                    let sampler = self.resources.get(&sampler).expect("Attempted to bind texture sampler with invalid handle.");
+                                },
+                                renderer::BindingHolder::Sampler(sampler) => {
+                                    let sampler = sampler.get(&self.resources);
                                     bind_group_entries.push(wgpu::BindGroupEntry {
                                         binding: current_binding,
                                         resource: wgpu::BindingResource::Sampler(sampler),
@@ -392,26 +413,42 @@ impl EngineState {
 
                     let bind_group = self.renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
-                        layout: &self.resources.get(&shader_handle).expect("Invalid shader handle.").bind_group_layout,
+                        layout: &shader_handle.get(&self.resources).bind_group_layout,
                         entries: bind_group_entries.as_slice(),
                     });
 
-                    queue.push(renderer::QueuedRenderObject {
-                        shader: shader_handle.clone(),
-                        vertex_buffer: mesh.vertex_buffer.clone(),
-                        index_buffer: mesh.index_buffer.clone(),
-                        bind_group,
-                        num_indices: mesh.num_elements,
-                    });
+                    if transparent {
+                        transparent_queue.push(renderer::QueuedRenderObject {
+                            shader: shader_handle.clone(),
+                            vertex_buffer: mesh.vertex_buffer.clone(),
+                            index_buffer: mesh.index_buffer.clone(),
+                            bind_group,
+                            num_indices: mesh.num_elements,
+                            transparent,
+                            double_sided,
+                        });
+                    } else {
+                        opaque_queue.push(renderer::QueuedRenderObject {
+                            shader: shader_handle.clone(),
+                            vertex_buffer: mesh.vertex_buffer.clone(),
+                            index_buffer: mesh.index_buffer.clone(),
+                            bind_group,
+                            num_indices: mesh.num_elements,
+                            transparent,
+                            double_sided,
+                        });
+                    }
                 }
             }
         }
 
-        queue
+        opaque_queue.extend(transparent_queue);
+
+        opaque_queue
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let render_objects = self.extract();
+        let mut render_objects = self.extract();
 
         let output = self.renderer.window.surface.get_current_texture()?;
 
@@ -443,21 +480,37 @@ impl EngineState {
             });
 
             {
-                for render_object in &render_objects {
-                    let shader = self.resources.get(&render_object.shader).unwrap();
-                    let vertex_buffer = self.resources.get(&render_object.vertex_buffer).unwrap();
-                    let index_buffer = self.resources.get(&render_object.index_buffer).unwrap();
+                for render_object in &mut render_objects {
+                    let index = renderer::PipelineProperties {
+                        transparent: render_object.transparent,
+                        double_sided: render_object.double_sided,
+                        colour_format: self.renderer.window.config.format,
+                        depth_format: Some(resource::Texture::DEPTH_FORMAT),
+                    };
                     
-                    render_pass.set_pipeline(&shader.pipeline);
+                    let shader = render_object.shader.get_mut(&mut self.resources);
+                    shader.prepare_pipeline(&self.renderer, index);
+                }
+                for render_object in &render_objects {
+                    let pipeline = {
+                        let shader = render_object.shader.get(&self.resources);
+                        shader.get_pipeline(renderer::PipelineProperties {
+                            transparent: render_object.transparent,
+                            double_sided: render_object.double_sided,
+                            colour_format: self.renderer.window.config.format,
+                            depth_format: Some(resource::Texture::DEPTH_FORMAT),
+                        }).unwrap()
+                    };
+
+                    let vertex_buffer = render_object.vertex_buffer.get(&self.resources);
+                    let index_buffer = render_object.index_buffer.get(&self.resources);
+                    
+                    render_pass.set_pipeline(pipeline);
+                    
                     render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
                     render_pass.set_bind_group(0, &render_object.bind_group, &[]);
-                    
-                    // for (index, bind_group) in render_object.bind_groups.iter().enumerate() {
-                    //     let bind_group = self.resources.get(bind_group).unwrap();
-                    //     render_pass.set_bind_group(index as u32, &*bind_group, &[]);
-                    // }
                     
                     render_pass.draw_indexed(0..render_object.num_indices, 0, 0..1);
                 }
@@ -536,8 +589,8 @@ pub fn run(app: App) {
                     state.post_update(&context);
     
                     {
-                        state.resources.get_mut(&state.keyboard_manager).expect("Lost handle to keyboard manager.").reset_input();
-                        state.resources.get_mut(&state.mouse_manager).expect("Lost handle to mouse manager.").reset_input();
+                        state.keyboard_manager.get_mut(&mut state.resources).reset_input();
+                        state.mouse_manager.get_mut(&mut state.resources).reset_input();
                     }
                     
                     // Almost at a tick, rendering a frame would be a waste, wait for tick
@@ -562,8 +615,8 @@ pub fn run(app: App) {
                         state.post_tick(&context);
     
                         {
-                            state.resources.get_mut(&state.tick_keyboard_manager).expect("Lost handle to keyboard manager.").reset_input();
-                            state.resources.get_mut(&state.tick_mouse_manager).expect("Lost handle to mouse manager.").reset_input();
+                            state.tick_keyboard_manager.get_mut(&mut state.resources).reset_input();
+                            state.tick_mouse_manager.get_mut(&mut state.resources).reset_input();
                         }
     
                         if state.frame_counter.current_tick % (state.ticks_per_second * 2) as usize == 0 {

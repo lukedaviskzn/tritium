@@ -1,4 +1,4 @@
-use crate::resource::{self, Texture};
+use crate::resource::Texture;
 
 pub struct WindowAdapter {
     pub(crate) window: winit::window::Window,

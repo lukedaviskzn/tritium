@@ -9,75 +9,98 @@ pub struct HandleId(Uid);
 
 // todo: separate into separate Handle and WeakHandle structs
 
-trait HandlesResource {}
-
-pub enum Handle<T> {
-    Strong(HandleId, Arc<PhantomData<T>>),
-    Weak(HandleId, std::sync::Weak<PhantomData<T>>),
+pub trait HandlesResource<T> {
+    fn id(&self) -> HandleId;
+    fn valid(&self) -> bool;
+    fn downgrade(&self) -> WeakHandle<T>;
 }
 
-impl<T> Handle<T> {
-    pub(crate) fn new_invalid() -> Handle<T> {
-        Handle::new_strong().downgrade()
-    }
+pub struct Handle<T>(HandleId, Arc<PhantomData<T>>);
 
-    pub fn new_strong() -> Handle<T> {
-        Handle::Strong(HandleId(Uid::new()), Arc::new(PhantomData))
-    }
+pub struct WeakHandle<T>(HandleId, std::sync::Weak<PhantomData<T>>);
 
-    /// If strong: create weak copy, if weak: create copy
-    pub fn downgrade(&self) -> Handle<T> {
-        match self {
-            Handle::Strong(uid, marker) => Handle::Weak(*uid, Arc::downgrade(marker)),
-            Handle::Weak(_, _) => self.clone(),
-        }
-    }
-
-    /// If weak: create strong reference (if possible), if strong: create copy
-    pub fn upgrade(&self) -> Option<Handle<T>> {
-        match self {
-            Handle::Strong(_, _) => Some(self.clone()),
-            Handle::Weak(uid, marker) => Some(Handle::Strong(*uid, std::sync::Weak::upgrade(marker)?)),
-        }
-    }
-
-    /// Holds valid reference to resource
-    pub fn valid(&self) -> bool {
-        match self {
-            // strong handle should always be true
-            Handle::Strong(_, _) => true,
-            // weak handle may no longer exist
-            Handle::Weak(_, marker) => std::sync::Weak::upgrade(marker).is_some(),
-        }
-    }
-
-    pub fn is_strong(&self) -> bool {
-        match self {
-            Handle::Strong(_, _) => true,
-            Handle::Weak(_, _) => false,
-        }
-    }
-
-    pub fn is_weak(&self) -> bool {
-        !self.is_strong()
+impl<T: 'static> Handle<T> {
+    pub(super) fn new() -> Handle<T> {
+        Handle(HandleId(Uid::new()), Arc::new(PhantomData))
     }
 
     pub(super) fn id(&self) -> HandleId {
-        match self {
-            Handle::Strong(uid, _) => *uid,
-            Handle::Weak(uid, _) => *uid,
-        }
+        self.0
+    }
+
+    pub fn downgrade(&self) -> WeakHandle<T> {
+        WeakHandle(self.0, Arc::downgrade(&self.1))
+    }
+
+    pub fn get<'s, 'a>(&'s self, resources: &'a Resources) -> &'a T where 'a: 's {
+        resources.get(self).expect("Attempted to fetch resources with invalid strong handle, this is a bug.")
+    }
+
+    pub fn get_mut<'s, 'a>(&'s mut self, resources: &'a mut Resources) -> &'a mut T where 'a: 's {
+        resources.get_mut(self).expect("Attempted to fetch resources with invalid strong handle, this is a bug.")
+    }
+
+    pub fn set(&self, resources: &mut Resources, resource: T) {
+        resources.set(self, resource);
     }
 }
 
+impl<T: 'static> WeakHandle<T> {
+    pub fn upgrade(&self) -> Option<Handle<T>> {
+        let arc = std::sync::Weak::upgrade(&self.1)?;
+        Some(Handle(self.0, arc))
+    }
+
+    pub(super) fn id(&self) -> HandleId {
+        self.0
+    }
+
+    pub fn get<'s, 'a>(&'s self, resources: &'a Resources) -> Option<&'a T> where 'a: 's {
+        resources.get(self)
+    }
+
+    pub fn get_mut<'s, 'a>(&'s mut self, resources: &'a mut Resources) -> Option<&'a mut T> where 'a: 's {
+        resources.get_mut(self)
+    }
+
+    pub fn set(&self, resources: &mut Resources, resource: T) {
+        resources.set(self, resource);
+    }
+}
+
+impl<T: 'static> HandlesResource<T> for Handle<T> {
+    fn id(&self) -> HandleId {
+        self.0
+    }
+
+    fn valid(&self) -> bool {
+        true
+    }
+
+    fn downgrade(&self) -> WeakHandle<T> {
+        self.downgrade()
+    }
+}
+
+impl<T: 'static> HandlesResource<T> for WeakHandle<T> {
+    fn id(&self) -> HandleId {
+        self.0
+    }
+
+    fn valid(&self) -> bool {
+        std::sync::Weak::strong_count(&self.1) > 0
+    }
+
+    fn downgrade(&self) -> WeakHandle<T> {
+        self.clone()
+    }
+}
+
+// Component/Renderable for Handle
 impl<T: 'static> AsAny for Handle<T> {
     fn as_any(&self) -> &dyn Any { self }
     fn as_any_mut(&mut self) -> &mut dyn Any { self }
 }
-
-// impl<T: !RenderableResource + 'static> Component for Handle<T> {}
-
-// impl<T: 'static> Component for Handle<T> {}
 
 impl<T: RenderableResource + 'static> Component for Handle<T> {
     fn as_renderable(&self) -> Option<&dyn Renderable> { Some(self) }
@@ -85,7 +108,7 @@ impl<T: RenderableResource + 'static> Component for Handle<T> {
 
 impl<T: RenderableResource + 'static> Renderable for Handle<T> {
     fn render_inputs(&self, node: &NodeDescriptor, renderer: &Renderer, resources: &mut Resources) -> Vec<RenderInput> {
-        match resources.get(&self) {
+        match resources.get(self) {
             Some(resource) => RenderableResource::render_inputs(resource, node, renderer, resources),
             None => vec![],
         }
@@ -103,37 +126,91 @@ impl Renderable for Handle<Shader> {
     }
 }
 
+// Component/Renderable for WeakHandle
+impl<T: 'static> AsAny for WeakHandle<T> {
+    fn as_any(&self) -> &dyn Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+}
+
+impl<T: RenderableResource + 'static> Component for WeakHandle<T> {
+    fn as_renderable(&self) -> Option<&dyn Renderable> { Some(self) }
+}
+
+impl<T: RenderableResource + 'static> Renderable for WeakHandle<T> {
+    fn render_inputs(&self, node: &NodeDescriptor, renderer: &Renderer, resources: &mut Resources) -> Vec<RenderInput> {
+        match resources.get(self) {
+            Some(resource) => RenderableResource::render_inputs(resource, node, renderer, resources),
+            None => vec![],
+        }
+    }
+}
+
+impl Component for WeakHandle<Shader> {
+    fn as_renderable(&self) -> Option<&dyn Renderable> { Some(self) }
+}
+
+impl Renderable for WeakHandle<Shader> {
+    fn render_inputs(&self, _node: &NodeDescriptor, _renderer: &Renderer, _resources: &mut Resources) -> Vec<RenderInput> {
+        // vec![RenderInput::new("shader", RenderInputStorage::Shader(self.clone()))]
+        match self.upgrade() {
+            Some(handle) => vec![RenderInput::Shader(handle)],
+            None => vec![],
+        }
+    }
+}
+
 // Manual implmentation of Debug, Clone, Hash, PartialEq, Eq, since generic T interferes with derive
 
 impl<T> std::fmt::Debug for Handle<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let type_name = std::any::type_name::<T>();
-        match self {
-            Self::Strong(uid, _) => f.debug_tuple(&format!("Handle<{}>::Strong", type_name)).field(uid).finish(),
-            Self::Weak(uid, _) => f.debug_tuple(&format!("Handle<{}>::Weak", type_name)).field(uid).finish(),
-        }
+        f.debug_tuple(&format!("Handle<{}>", std::any::type_name::<T>())).field(&self.0).finish()
     }
 }
 
 impl<T> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Strong(arg0, arg1) => Self::Strong(arg0.clone(), arg1.clone()),
-            Self::Weak(arg0, arg1) => Self::Weak(arg0.clone(), arg1.clone()),
-        }
+    fn clone(&self) -> Handle<T> {
+        Handle(self.0, Arc::clone(&self.1))
     }
 }
 
-impl<T> Hash for Handle<T> {
+impl<T: 'static> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id().hash(state);
     }
 }
 
-impl<T> PartialEq for Handle<T> {
+impl<T: 'static> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id() == other.id()
     }
 }
 
-impl<T> Eq for Handle<T> {}
+impl<T: 'static> Eq for Handle<T> {}
+
+// Manual implmentation for weak handle
+
+impl<T> std::fmt::Debug for WeakHandle<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple(&format!("WeakHandle<{}>", std::any::type_name::<T>())).field(&self.0).finish()
+    }
+}
+
+impl<T> Clone for WeakHandle<T> {
+    fn clone(&self) -> WeakHandle<T> {
+        WeakHandle(self.0, std::sync::Weak::clone(&self.1))
+    }
+}
+
+impl<T: 'static> Hash for WeakHandle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+impl<T: 'static> PartialEq for WeakHandle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl<T: 'static> Eq for WeakHandle<T> {}

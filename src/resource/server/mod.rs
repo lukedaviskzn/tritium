@@ -1,10 +1,8 @@
-use std::{path::Path, io::{Cursor, BufReader}, collections::HashMap, any::{TypeId, Any}, ffi::OsStr};
+use std::{path::Path, io::{Cursor, BufReader}, collections::HashMap, any::{TypeId, Any}};
 
-use glam::Vec4Swizzles;
-use gltf::Gltf;
 use wgpu::util::DeviceExt;
 
-use crate::{resource::{Material, Mesh, AlphaMode}, engine::Rgba, util::AsAny, renderer::{ModelVertex, Renderer}, node::Node, components::Transform, camera::Camera};
+use crate::{resource::{Material, Mesh, AlphaMode, Sampler}, engine::Rgba, util::AsAny, renderer::{ModelVertex, Renderer}, node::Node, components::Transform, camera::Camera};
 
 use super::{Texture, Model};
 
@@ -24,23 +22,16 @@ impl<R: 'static> ManagesResources for ResourceManager<R> {
     // returns total number of assets
     fn drop_invalid(&mut self) {
         // retain only if marker has strong references
-        self.resources.retain(|handle, _| if let Handle::Weak(_, marker) = handle {
-            // if marker.strong_count() <= 0 {
-            //     log::trace!("Dropping resource {:?}", handle);
-            // }
-            marker.strong_count() > 0
-        } else {
-            false
-        });
+        self.resources.retain(|handle, _| handle.valid());
     }
 }
 
 pub struct ResourceManager<T> {
     // weak handle, so as to drop resources automatically (on first_update)
-    resources: HashMap<Handle<T>, T>,
+    resources: HashMap<WeakHandle<T>, T>,
 }
 
-impl<T> ResourceManager<T> {
+impl<T: 'static> ResourceManager<T> {
     pub fn new() -> ResourceManager<T> {
         ResourceManager {
             resources: hashmap!{},
@@ -48,15 +39,15 @@ impl<T> ResourceManager<T> {
     }
 
     pub fn store(&mut self, resource: T) -> Handle<T> {
-        let handle = Handle::new_strong();
+        let handle = Handle::new();
 
         self.resources.insert(handle.downgrade(), resource);
 
         handle
     }
 
-    pub fn get(&self, handle: &Handle<T>) -> Option<&T> {
-        match self.resources.get_key_value(&handle) {
+    pub fn get<H: HandlesResource<T>>(&self, handle: &H) -> Option<&T> {
+        match self.resources.get_key_value(&handle.downgrade()) {
             // Resource present
             Some((key, value)) => {
                 if key.valid() {
@@ -71,8 +62,8 @@ impl<T> ResourceManager<T> {
         }
     }
 
-    pub fn get_mut(&mut self, handle: &Handle<T>) -> Option<&mut T> {
-        match self.resources.get_mut(&handle) {
+    pub fn get_mut<H: HandlesResource<T>>(&mut self, handle: &H) -> Option<&mut T> {
+        match self.resources.get_mut(&handle.downgrade()) {
             // Resource present
             Some(resource) => {
                 if handle.valid() {
@@ -87,10 +78,8 @@ impl<T> ResourceManager<T> {
         }
     }
 
-    pub fn set(&mut self, handle: &Handle<T>, resource: T) -> Handle<T> {
+    pub fn set<H: HandlesResource<T>>(&mut self, handle: &H, resource: T) {
         self.resources.insert(handle.downgrade(), resource);
-
-        handle.clone()
     }
 }
 
@@ -114,7 +103,7 @@ impl<T> ResourceManager<T> {
 pub struct Resources {
     managers: HashMap<TypeId, Box<dyn ManagesResources>>,
     global_handles: HashMap<String, Box<dyn Any>>,
-    // engine_global_handles: HashMap<String, Box<dyn Any>>,
+    engine_global_handles: HashMap<String, Box<dyn Any>>,
 }
 
 impl Resources {
@@ -122,7 +111,7 @@ impl Resources {
         Resources {
             managers: hashmap!{},
             global_handles: hashmap!{},
-            // engine_global_handles: hashmap!{},
+            engine_global_handles: hashmap!{},
         }
     }
 
@@ -178,37 +167,27 @@ impl Resources {
         handle
     }
 
-    pub fn get<T: 'static>(&self, handle: &Handle<T>) -> Option<&T> {
+    fn get<T: 'static, H: HandlesResource<T>>(&self, handle: &H) -> Option<&T> {
         let manager = self.get_manager::<T>()?;
         
         let resource = manager.get(handle);
         
-        if resource.is_none() && handle.is_strong() {
-            log::error!("Failed to fetch resource with strong handle {handle:?}");
-        }
-        
         resource
     }
 
-    pub fn get_mut<T: 'static>(&mut self, handle: &Handle<T>) -> Option<&mut T> {
+    fn get_mut<T: 'static, H: HandlesResource<T>>(&mut self, handle: &H) -> Option<&mut T> {
         let manager = self.get_manager_mut::<T>()?;
         
         let resource = manager.get_mut(handle);
         
-        if resource.is_none() && handle.is_strong() {
-            log::error!("Failed to fetch resource with strong handle {handle:?}");
-        }
-        
         resource
     }
 
-    pub fn set<T: 'static>(&mut self, handle: &Handle<T>, resource: T) -> Handle<T> {
+    fn set<T: 'static, H: HandlesResource<T>>(&mut self, handle: &H, resource: T) {
         self.register_manager::<T>();
-        let manager = self.get_manager_mut::<T>().unwrap();
         
-        let handle = manager.set(handle, resource);
-
-        handle
+        let manager = self.get_manager_mut::<T>().unwrap();
+        manager.set(handle, resource);
     }
 
     pub fn set_global<T: 'static>(&mut self, key: &str, resource: T) {
@@ -224,27 +203,27 @@ impl Resources {
         self.global_handles.get_mut(key)?.downcast_ref::<T>()
     }
 
-    // pub(crate) fn set_engine_global<T: 'static>(&mut self, key: &str, resource: T) {
-    //     let resource: Box<dyn Any> = Box::new(resource);
-    //     self.engine_global_handles.insert(key.to_owned(), resource);
-    // }
+    pub(crate) fn set_engine_global<T: 'static>(&mut self, key: &str, resource: T) {
+        let resource: Box<dyn Any> = Box::new(resource);
+        self.engine_global_handles.insert(key.to_owned(), resource);
+    }
 
-    // pub(crate) fn get_engine_global<T: 'static>(&self, key: &str) -> Option<&T> {
-    //     self.engine_global_handles.get(key)?.downcast_ref::<T>()
-    // }
+    pub(crate) fn get_engine_global<T: 'static>(&self, key: &str) -> Option<&T> {
+        self.engine_global_handles.get(key)?.downcast_ref::<T>()
+    }
 
-    // pub(crate) fn get_engine_global_mut<T: 'static>(&mut self, key: &str) -> Option<&mut T> {
-    //     self.engine_global_handles.get_mut(key)?.downcast_mut::<T>()
-    // }
+    pub(crate) fn get_engine_global_mut<T: 'static>(&mut self, key: &str) -> Option<&mut T> {
+        self.engine_global_handles.get_mut(key)?.downcast_mut::<T>()
+    }
 }
 
 pub fn load_texture<P: AsRef<Path>>(
-    path: P,
     renderer: &Renderer,
     resources: &mut Resources,
+    path: P,
     // srgb: bool,
     flip_y: bool,
-) -> Result<Texture, image::ImageError> {
+) -> Result<Handle<Texture>, image::ImageError> {
     let path = path.as_ref();
 
     log::debug!("Loading texture {path:?}");
@@ -253,7 +232,10 @@ pub fn load_texture<P: AsRef<Path>>(
 
     let image= image::open(path)?;
 
-    Ok(Texture::from_image(renderer, resources, &image, Some(path_str), flip_y))
+    let texture = Texture::from_image(renderer, resources, &image, Some(path_str), flip_y);
+    let texture = resources.store(texture);
+
+    Ok(texture)
 }
 
 pub fn load_obj<P: AsRef<Path>>(
@@ -294,33 +276,34 @@ pub fn load_obj<P: AsRef<Path>>(
     let mut materials = vec![];
 
     for material in obj_materials.map_err(|err| ModelLoadError::TobjError(err))? {
-        let name = if material.name.len() > 0 {
-            Some(material.name.as_str())
-        } else {
-            None
-        };
-
         let diffuse_texture = if material.diffuse_texture.len() > 0 {
-            load_texture(parent.join(material.diffuse_texture), renderer, resources, true).map_err(|err| ModelLoadError::ImageError(err))?
+            load_texture(renderer, resources, parent.join(material.diffuse_texture), true).map_err(|err| ModelLoadError::ImageError(err))?
         } else {
-            Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], Some(&format!("{} diffuse pixel texture", material.name)), true)
+            let texture = Texture::from_pixel(renderer, resources, &[255, 255, 255, 255], Some(&format!("{} diffuse pixel texture", material.name)));
+            resources.store(texture)
         };
-        let diffuse_texture = resources.store(diffuse_texture);
+        
+        let diffuse_sampler = Sampler::new_default(renderer, resources, diffuse_texture);
+        let diffuse_sampler = resources.store(diffuse_sampler);
 
         let diffuse_colour = Rgba::new(material.diffuse[0], material.diffuse[1], material.diffuse[2], 1.0);
 
         let normal_texture = if material.normal_texture.len() > 0 {
-            load_texture(parent.join(material.normal_texture), renderer, resources, true).map_err(|err| ModelLoadError::ImageError(err))?
+            load_texture(renderer, resources, parent.join(material.normal_texture), true).map_err(|err| ModelLoadError::ImageError(err))?
         } else if let Some(disp_map) = material.unknown_param.get("map_Disp") {
             if disp_map.len() > 0 {
-                load_texture(parent.join(&material.unknown_param["map_Disp"]), renderer, resources, true).map_err(|err| ModelLoadError::ImageError(err))?
+                load_texture(renderer, resources, parent.join(&material.unknown_param["map_Disp"]), true).map_err(|err| ModelLoadError::ImageError(err))?
             } else {
-                Texture::from_pixel(renderer, resources, &[128, 128, 255, 255], Some(&format!("{} normal pixel texture", material.name)), false)
+                let texture = Texture::from_pixel(renderer, resources, &[128, 128, 255, 255], Some(&format!("{} normal pixel texture", material.name)));
+                resources.store(texture)
             }
         } else {
-            Texture::from_pixel(renderer, resources, &[128, 128, 255, 255], Some(&format!("{} normal pixel texture", material.name)), false)
+            let texture = Texture::from_pixel(renderer, resources, &[128, 128, 255, 255], Some(&format!("{} normal pixel texture", material.name)));
+            resources.store(texture)
         };
-        let normal_texture = resources.store(normal_texture);
+        
+        let normal_sampler = Sampler::new_default(renderer, resources, normal_texture);
+        let normal_sampler = resources.store(normal_sampler);
 
         let normal_scale = 1.0;
 
@@ -342,13 +325,20 @@ pub fn load_obj<P: AsRef<Path>>(
         //     None,
         //     Rgba::BLACK,
         // );
-        let material = Material::builder()
-            .albedo_texture(diffuse_texture)
+
+        let mut builder = Material::builder()
+            .albedo_sampler(diffuse_sampler)
             .albedo(diffuse_colour)
             .metallic_factor(0.0)
             .roughness_factor(0.5)
-            .normal_texture(normal_texture)
-            .build(renderer, resources);
+            .normal_sampler(normal_sampler)
+            .normal_scale(normal_scale);
+        
+        if material.name.len() > 0 {
+            builder = builder.name(material.name.as_str())
+        };
+
+        let material = builder.build(renderer, resources);
 
         materials.push(resources.store(material));
     }
@@ -437,6 +427,8 @@ pub fn load_gltf<P: AsRef<Path>>(
     let (document, import_data) = {
         let (document, buffers, images) = gltf::import(&path).map_err(|err| SceneLoadError::GltfError(err))?;
 
+        let mut i = 0;
+
         let textures = images.into_iter().map(|data| {
             let gltf::image::Data {
                 pixels,
@@ -445,12 +437,18 @@ pub fn load_gltf<P: AsRef<Path>>(
                 height,
             } = data;
 
+            log::trace!("Loading gltf texture #{i}: (format: {format:?}, data: {:?})", &pixels[0..3]);
+
+            i += 1;
+
             // convert `gltf` Image to `image` DynamicImage
             let image = match format {
+                // Luma8
                 gltf::image::Format::R8 => image::DynamicImage::ImageLuma8(image::GrayImage::from_raw(width, height, pixels).unwrap()),
+                // LumaA8
                 gltf::image::Format::R8G8 => {
-                    let pixels = pixels.chunks(2).flat_map(|chunk| [chunk[0], chunk[1], 0]).collect();
-                    image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels).unwrap())
+                    let pixels = pixels.chunks(2).flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]]).collect();
+                    image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels).unwrap())
                 },
                 gltf::image::Format::R8G8B8 => image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels).unwrap()),
                 gltf::image::Format::R8G8B8A8 => image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels).unwrap()),
@@ -466,16 +464,18 @@ pub fn load_gltf<P: AsRef<Path>>(
                     }).collect();
                     image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels).unwrap())
                 },
+                // Luma16
                 gltf::image::Format::R16 => {
                     let pixels = pixels.chunks(2).map(|chunk| bytemuck::cast_slice(chunk)[0]).collect();
                     image::DynamicImage::ImageLuma16(image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(width, height, pixels).unwrap())
                 },
+                // LumaA16
                 gltf::image::Format::R16G16 => {
                     let pixels = pixels.chunks(4).flat_map(|chunk| {
                         let slice = bytemuck::cast_slice(chunk);
-                        [slice[0], slice[1], 0]
+                        [slice[0], slice[0], slice[0], slice[1]]
                     }).collect();
-                    image::DynamicImage::ImageRgb16(image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_raw(width, height, pixels).unwrap())
+                    image::DynamicImage::ImageRgba16(image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_raw(width, height, pixels).unwrap())
                 },
                 gltf::image::Format::R16G16B16 => {
                     let pixels = pixels.chunks(2).map(|chunk| bytemuck::cast_slice(chunk)[0]).collect();
@@ -497,8 +497,6 @@ pub fn load_gltf<P: AsRef<Path>>(
             textures,
         })
     };
-
-    log::trace!("Gltf buffers loaded {:?}", path.as_ref());
 
     let scene = if let Some(scene) = scene {
         document.scenes().nth(scene).ok_or(SceneLoadError::SceneNotFound)?
@@ -552,7 +550,6 @@ pub fn load_gltf<P: AsRef<Path>>(
                 let mut tex_coords = vec![];
 
                 for (semantic, accessor) in primitive.attributes() {
-                    // log::trace!("Reading semantic {:?}", semantic);
                     match &semantic {
                         // todo: sparse accessors
                         gltf::Semantic::Positions | gltf::Semantic::Normals | gltf::Semantic::Tangents | gltf::Semantic::TexCoords(0) => {
@@ -565,8 +562,6 @@ pub fn load_gltf<P: AsRef<Path>>(
                             let start_index = view.offset() + accessor.offset();
                             let item_size = data_type.size() * dimensions.multiplicity();
                             let stride = view.stride().unwrap_or(item_size);
-
-                            // log::trace!("{semantic:?} {dimensions:?} {data_type:?} {item_size:?} {stride:?}");
 
                             for i in 0..accessor.count() {
                                 let index = start_index + i * stride;
@@ -646,8 +641,8 @@ pub fn load_gltf<P: AsRef<Path>>(
                 for i in 0..positions.len() {
                     vertices.push(ModelVertex {
                         position: positions[i],
-                        tex_coords: tex_coords[i],
-                        normal: normals[i],
+                        tex_coords: *tex_coords.get(i).unwrap_or(&glam::Vec2::ZERO),
+                        normal: *normals.get(i).unwrap_or(&glam::Vec3::ZERO),
                         // tangent: if has_tangents { tangents[i].xyz() } else { glam::Vec3::ZERO },
                         tangent: glam::Vec3::ZERO,
                         bitangent: glam::Vec3::ZERO,
@@ -682,30 +677,24 @@ pub fn load_gltf<P: AsRef<Path>>(
                     }
                 }
 
-                fn gltf_sampler_to_wgpu(sampler: gltf::texture::Sampler) -> wgpu::SamplerDescriptor {
+                fn gltf_sampler_to_wgpu(renderer: &Renderer, resources: &mut Resources, sampler: gltf::texture::Sampler, texture: Handle<Texture>) -> Handle<Sampler> {
                     let mag_filter = gltf_mag_filter_to_wgpu(sampler.mag_filter().unwrap_or(gltf::texture::MagFilter::Linear));
                     let (min_filter, mipmap_filter) = gltf_min_filter_to_wgpu(sampler.min_filter().unwrap_or(gltf::texture::MinFilter::Nearest));
 
-                    wgpu::SamplerDescriptor {
-                        address_mode_u: gltf_wrap_to_wgpu(sampler.wrap_s()),
-                        address_mode_v: gltf_wrap_to_wgpu(sampler.wrap_t()),
-                        address_mode_w: wgpu::AddressMode::ClampToEdge,
-                        mag_filter,
-                        min_filter,
-                        mipmap_filter,
-                        ..Default::default()
-                    }
+                    let sampler = Sampler::new(
+                        renderer, resources,
+                        texture,
+                        gltf_wrap_to_wgpu(sampler.wrap_s()),
+                        gltf_wrap_to_wgpu(sampler.wrap_t()),
+                        mag_filter, min_filter, mipmap_filter
+                    );
+
+                    resources.store(sampler)
                 }
 
-                fn gltf_texture_to_wgpu(renderer: &Renderer, resources: &mut Resources, texture: gltf::texture::Texture, textures: &Vec<Handle<Texture>>) -> Handle<Texture> {
-                    // texture.sampler(), todo: handle this correctly, texture may have more than one sampler
-                    let sampler = renderer.device.create_sampler(&gltf_sampler_to_wgpu(texture.sampler()));
-                    let sampler = resources.store(sampler);
-                    
+                fn gltf_texture_to_wgpu(texture: gltf::texture::Texture, textures: &Vec<Handle<Texture>>) -> Handle<Texture> {
                     let image_index = texture.source().index();
                     let texture_handle = textures[image_index].clone();
-                    let texture = resources.get_mut(&texture_handle).unwrap();
-                    texture.sampler = sampler;
 
                     texture_handle
                 }
@@ -732,13 +721,19 @@ pub fn load_gltf<P: AsRef<Path>>(
                     let pbr = material.pbr_metallic_roughness();
                     
                     if let Some(texture) = pbr.base_color_texture() {
-                        builder = builder.albedo_texture(gltf_texture_to_wgpu(renderer, resources, texture.texture(), &import_data.textures));
+                        let t = gltf_texture_to_wgpu(texture.texture(), &import_data.textures);
+                        builder = builder
+                            .albedo_sampler(gltf_sampler_to_wgpu(renderer, resources, texture.texture().sampler(), t));
                     };
                     
                     builder = builder.albedo(pbr.base_color_factor().into());
                     
                     if let Some(texture) = pbr.metallic_roughness_texture() {
-                        builder = builder.metallic_roughness_texture(gltf_texture_to_wgpu(renderer, resources, texture.texture(), &import_data.textures));
+                        let t = gltf_texture_to_wgpu(texture.texture(), &import_data.textures);
+                        builder = builder
+                            .metallic_sampler(gltf_sampler_to_wgpu(renderer, resources, texture.texture().sampler(), t.clone()));
+                        builder = builder
+                            .roughness_sampler(gltf_sampler_to_wgpu(renderer, resources, texture.texture().sampler(), t));
                     };
 
                     builder = builder
@@ -746,24 +741,24 @@ pub fn load_gltf<P: AsRef<Path>>(
                         .roughness_factor(pbr.roughness_factor());
 
                     if let Some(normal_texture) = material.normal_texture() {
+                        let t = gltf_texture_to_wgpu(normal_texture.texture(), &import_data.textures);
                         builder = builder
-                            .normal_texture(gltf_texture_to_wgpu(renderer, resources, normal_texture.texture(), &import_data.textures))
+                            .normal_sampler(gltf_sampler_to_wgpu(renderer, resources, normal_texture.texture().sampler(), t))
                             .normal_scale(normal_texture.scale());
                     }
                     
                     if let Some(occlusion_texture) = material.occlusion_texture() {
+                        let t = gltf_texture_to_wgpu(occlusion_texture.texture(), &import_data.textures);
                         builder = builder
-                            .occlusion_texture(gltf_texture_to_wgpu(renderer, resources, occlusion_texture.texture(), &import_data.textures))
+                            .occlusion_sampler(gltf_sampler_to_wgpu(renderer, resources, occlusion_texture.texture().sampler(), t))
                             .occlusion_strength(occlusion_texture.strength());
                     }
                     
                     if let Some(texture) = material.emissive_texture() {
-                        builder = builder.emissive_texture(gltf_texture_to_wgpu(renderer, resources, texture.texture(), &import_data.textures));
+                        let t = gltf_texture_to_wgpu(texture.texture(), &import_data.textures);
+                        builder = builder
+                            .emissive_sampler(gltf_sampler_to_wgpu(renderer, resources, texture.texture().sampler(), t));
                     };
-                    
-                    if let Some(texture) = material.occlusion_texture() {
-                        builder = builder.emissive_texture(gltf_texture_to_wgpu(renderer, resources, texture.texture(), &import_data.textures));
-                    }
 
                     builder = builder.emissive_factor(material.emissive_factor().into());
 
