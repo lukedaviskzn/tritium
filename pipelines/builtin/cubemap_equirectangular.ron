@@ -1,0 +1,10 @@
+ShaderResource (
+    name: "cubemap_equirectangular",
+    inputs: [
+        // Manual(Texture),
+        Manual(Sampler),
+        Manual(Uniform),
+    ],
+    vertex_type: Position,
+    shader_file: "cubemap_equirectangular.wgsl",
+)

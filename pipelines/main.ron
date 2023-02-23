@@ -24,10 +24,10 @@ ShaderResource (
             ty: CubeSampler,
             res: "tritium::irradiance",
         ),
-        Resource (
-            ty: CubeSampler,
-            res: "tritium::reflections",
-        ),
+        // Resource (
+        //     ty: CubeSampler,
+        //     res: "tritium::reflections",
+        // ),
     ],
     vertex_type: Model,
     shader_file: "main.wgsl",

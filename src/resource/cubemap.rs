@@ -1,8 +1,8 @@
 use image::GenericImageView;
 
-use crate::{renderer::{Renderer, RenderInput, RenderableResource, BindingHolder}, node::NodeDescriptor, resource::Texture};
+use crate::{renderer::{Renderer, RenderInput, RenderableResource, BindingHolder, Shader, PipelineProperties, UniformBuffer}, node::NodeDescriptor, resource::{Texture, Model}};
 
-use super::{Resources, Handle};
+use super::{Resources, Handle, Sampler};
 
 pub struct CubeMap {
     pub texture: wgpu::Texture,
@@ -15,14 +15,15 @@ impl CubeMap {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
     /// From 2x1 equirectangular image, 2048x1024 texture will result in 512x512x6 cubemap. (cubemap width = source width / 4, cubemap height = source height / 2)
-    pub fn from_equirectangular(
+    pub fn from_image_equirectangular(
         renderer: &Renderer,
         resources: &mut Resources,
         source: &image::DynamicImage,
         label: Option<&str>,
-        srgb: bool,
+        // srgb: bool,
     ) -> Result<CubeMap, CubeError> {
         let (image_raw, dimensions, format, bytes_per_pixel) = {
+            let srgb = false;
             use image::DynamicImage::*;
             match source {
                 ImageRgb8(_) => {
@@ -60,21 +61,18 @@ impl CubeMap {
             }
         };
 
-        // let format = match format {
-        //     wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
-        //     wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
-        //     _ => format,
-        // };
+        let source = Texture::from_bytes(renderer, resources, &image_raw, dimensions, format, None, true);
+        let source = resources.store(source);
+        let source = Sampler::new_default(renderer, resources, source);
 
-        // let image_raw = image_raw.chunks((bytes_per_pixel * dimensions.0) as usize).rev().flatten().map(|b| *b).collect::<Vec<_>>();
-        
         let size = wgpu::Extent3d {
             width: dimensions.0 / 4,
             height: dimensions.1 / 2,
             depth_or_array_layers: 6,
         };
         
-        let mip_level_count = ((size.width as f32).log2().max((size.height as f32).log2()).ceil() as u32).max(1);
+        // let mip_level_count = ((size.width as f32).log2().max((size.height as f32).log2()).ceil() as u32).max(1);
+        let mip_level_count = 1;
         
         let cubemap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
             label,
@@ -87,52 +85,106 @@ impl CubeMap {
         });
 
         // (dir, tangent, bitangent)
-        let cubemap_dirs = [
-            (glam::Vec3::X, glam::Vec3::NEG_Z, glam::Vec3::Y),
-            (glam::Vec3::NEG_X, glam::Vec3::Z, glam::Vec3::Y),
-            (glam::Vec3::Y, glam::Vec3::X, glam::Vec3::NEG_Z),
-            (glam::Vec3::NEG_Y, glam::Vec3::X, glam::Vec3::Z),
-            (glam::Vec3::Z, glam::Vec3::X, glam::Vec3::Y),
-            (glam::Vec3::NEG_Z, glam::Vec3::NEG_X, glam::Vec3::Y),
+        let cubemap_proj = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 10.0);
+        let cubemap_viewproj = [
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y),
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_X, glam::Vec3::Y),
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::Y, glam::Vec3::Z),
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Y, glam::Vec3::NEG_Z),
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::NEG_Z, glam::Vec3::Y),
+            cubemap_proj * glam::Mat4::look_at_rh(glam::Vec3::ZERO, glam::Vec3::Z, glam::Vec3::Y),
         ];
-        
-        fn spherical_to_equirectangular(v: glam::Vec3) -> glam::Vec2 {
-            let mut uv = glam::vec2(f32::atan2(v.z, v.x), f32::asin(v.y));
-            let inv_atan = glam::vec2(0.1591, 0.3183);
-            uv *= inv_atan;
-            uv += 0.5;
-            return uv;
-        }
 
-        let image_chunks = image_raw.chunks(bytes_per_pixel as usize).collect::<Vec<_>>();
+        let index = PipelineProperties {
+            transparent: false,
+            double_sided: false,
+            colour_format: format,
+            depth_format: None,
+        };
 
-        for (i, (dir, tangent, bitangent)) in cubemap_dirs.into_iter().enumerate() {
-            let mut face_bytes: Vec<u8> = vec![];
+        let mut pipeline = Shader::from_resource(renderer, "pipelines/builtin/cubemap_equirectangular.ron").expect("Cubemap equirectangular shader not found.");
+        pipeline.prepare_pipeline(renderer, index);
 
-            for cy in 0..size.height {
-                let cy = cy as f32 * 2.0 / size.height as f32 - 1.0;
-                for cx in 0..size.width {
-                    let cx = cx as f32 * 2.0 / size.width as f32 - 1.0;
+        let cube_model = Model::new_inverted_cube(renderer, resources, None);
 
-                    let dir = (dir + cx * tangent + cy * bitangent).normalize();
+        // let image_chunks = image_raw.chunks(bytes_per_pixel as usize).collect::<Vec<_>>();
 
-                    let uv = spherical_to_equirectangular(dir) * glam::vec2(dimensions.0 as f32, dimensions.1 as f32);
-                    let uv = glam::uvec2((uv.x.round() as u32).clamp(0, dimensions.0 - 1), (uv.y.round() as u32).clamp(0, dimensions.1 - 1));
-                    let index = (uv.x + uv.y * dimensions.0) as usize;
-                    
-                    let chunk = image_chunks[index];
-                    face_bytes.extend(chunk);
-                }
+        for (i, matrix) in cubemap_viewproj.into_iter().enumerate() {
+            let face_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            });
+
+            let face_view = face_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let uniform = UniformBuffer::from_value(renderer, resources, matrix);
+
+            let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&source.texture.get(resources).view.get(resources)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&source.sampler.get(resources)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: uniform.buffer.get(resources).as_entire_binding(),
+                    },
+                ],
+            });
+
+            let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &face_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                });
+
+                render_pass.set_pipeline(pipeline.get_pipeline(index).unwrap());
+                render_pass.set_vertex_buffer(0, cube_model.meshes[0].vertex_buffer.get(resources).slice(..));
+                render_pass.set_index_buffer(cube_model.meshes[0].index_buffer.get(resources).slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.set_bind_group(0, &bind_group, &[]);
+
+                render_pass.draw_indexed(0..cube_model.meshes[0].num_elements, 0, 0..1);
             }
-        
-            let face_texture = Texture::from_bytes(renderer, resources, &face_bytes, (size.width, size.height), format, None, srgb);
+            
+            renderer.queue.submit(std::iter::once(encoder.finish()));
+
+            let face_texture = Texture::generate_mipmaps(renderer, resources, face_texture, format, wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            });
 
             let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             
             for mip in 0..mip_level_count {
                 encoder.copy_texture_to_texture(
                     wgpu::ImageCopyTexture {
-                        texture: &face_texture.texture,
+                        texture: &face_texture,
                         mip_level: mip,
                         origin: wgpu::Origin3d::ZERO,
                         aspect: wgpu::TextureAspect::All,
@@ -154,31 +206,8 @@ impl CubeMap {
                     }
                 );
             }
+            
             renderer.queue.submit(std::iter::once(encoder.finish()));
-
-            // renderer.queue.write_texture(
-            //     wgpu::ImageCopyTexture {
-            //         aspect: wgpu::TextureAspect::All,
-            //         texture: &cubemap_texture,
-            //         mip_level: 0,
-            //         origin: wgpu::Origin3d {
-            //             x: 0,
-            //             y: 0,
-            //             z: i as u32,
-            //         },
-            //     },
-            //     &face_bytes,
-            //     wgpu::ImageDataLayout {
-            //         offset: 0,
-            //         bytes_per_row: std::num::NonZeroU32::new(bytes_per_pixel * size.width),
-            //         rows_per_image: std::num::NonZeroU32::new(size.height),
-            //     },
-            //     wgpu::Extent3d {
-            //         width: size.width,
-            //         height: size.height,
-            //         depth_or_array_layers: 1,
-            //     },
-            // );
         }
 
         let view = cubemap_texture.create_view(&wgpu::TextureViewDescriptor {
@@ -187,35 +216,7 @@ impl CubeMap {
             ..Default::default()
         });
 
-        // let sampler = renderer.device.create_sampler(
-        //     &wgpu::SamplerDescriptor {
-        //         address_mode_u: wgpu::AddressMode::ClampToEdge,
-        //         address_mode_v: wgpu::AddressMode::ClampToEdge,
-        //         address_mode_w: wgpu::AddressMode::ClampToEdge,
-        //         mag_filter: wgpu::FilterMode::Linear,
-        //         min_filter: wgpu::FilterMode::Nearest,
-        //         mipmap_filter: wgpu::FilterMode::Nearest,
-        //         ..Default::default()
-        //     }
-        // );
-
         let view = resources.store(view);
-        // let sampler = resources.store(sampler);
-
-        // let bind_group = resources.store(renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label,
-        //     layout: &renderer.bind_group_layouts[&BindGroupLayoutType::CubeMap],
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: wgpu::BindingResource::TextureView(&view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::Sampler(&sampler),
-        //         },
-        //     ],
-        // }));
         
         Ok(CubeMap {
             texture: cubemap_texture,

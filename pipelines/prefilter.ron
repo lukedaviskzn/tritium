@@ -1,0 +1,10 @@
+ShaderResource (
+    name: "texture_mipmaps",
+    inputs: [
+        // Manual(CubeMap),
+        Manual(CubeSampler),
+        Manual(Uniform),
+    ],
+    vertex_type: None,
+    shader_file: "texture_mipmaps.wgsl",
+)

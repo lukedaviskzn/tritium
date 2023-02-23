@@ -55,10 +55,10 @@ var<uniform> num_ambient_lights: u32;
 var irradiance_map: texture_cube<f32>;
 //!binding()
 var irradiance_sampler: sampler;
-//!binding()
-var reflections_map: texture_cube<f32>;
-//!binding()
-var reflections_sampler: sampler;
+// //!binding()
+// var reflections_map: texture_cube<f32>;
+// //!binding()
+// var reflections_sampler: sampler;
 
 // Vertex Shader
 
@@ -185,8 +185,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // let map_normal = vec3(0.0, 0.0, 1.0);
 
     var material: Material;
-    material.albedo = textureSample(albedo_texture, albedo_sampler, in.tex_coords) * albedo;
-    material.albedo = srgb_to_linear(material.albedo) * srgb_to_linear(albedo);
+    material.albedo = textureSample(albedo_texture, albedo_sampler, in.tex_coords);
+    material.albedo = srgba_to_linear(material.albedo) * srgba_to_linear(albedo);
     
     material.metallic = textureSample(metallic_texture, metallic_sampler, in.tex_coords).b * metallic_factor;
     material.roughness = textureSample(roughness_texture, roughness_sampler, in.tex_coords).g * roughness_factor;
@@ -203,12 +203,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let kd = 1.0 - ks;
     let irradiance = textureSample(irradiance_map, irradiance_sampler, normal).rgb;
     let diffuse = irradiance * material.albedo.rgb;
-    let ambient = (kd * diffuse) * material.occlusion; 
-    // todo: fix this, this is not the proper way of doing reflections
-    let r = 2.0 * dot(view_dir, normal) * normal - view_dir;
-    let reflections = textureSample(reflections_map, reflections_sampler, r).rgb;
-    let reflections = reflections * material.albedo.rgb;
-    let ambient = ambient + reflections;
+    let ambient = (kd * diffuse) * material.occlusion;
 
     if (material.albedo.a <= alpha_mode.cutoff) {
         discard;
@@ -233,10 +228,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     ambient_light *= material.occlusion;
 
-    var final_colour = reflectance + ambient_light + material.emissive.rgb;
-    
-    // final_colour /= (final_colour + vec3(1.0));
-
+    let final_colour = reflectance + ambient_light + material.emissive.rgb;
     let final_colour = tonemap(final_colour);
     
     return vec4(final_colour, material.albedo.a);

@@ -57,11 +57,11 @@ impl Texture {
         }
 
         // srgb will be calculated in the shader
-        // let format = match format {
-        //     wgpu::TextureFormat::Rgba8UnormSrgb if !srgb => wgpu::TextureFormat::Rgba8Unorm,
-        //     wgpu::TextureFormat::Bgra8UnormSrgb if !srgb => wgpu::TextureFormat::Bgra8Unorm,
-        //     _ => format,
-        // };
+        let format = match format {
+            wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+            _ => format,
+        };
 
         let bytes = bytes.to_vec();
         
@@ -139,97 +139,8 @@ impl Texture {
             size,
         );
 
-        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let source_sampler = renderer.device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                mag_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }
-        );
-
-        let shader = if let Some(shader) = resources.get_engine_global_mut::<Shader>("texture::mipmap_pipeline") {
-            shader.prepare_pipeline(renderer, PipelineProperties {
-                transparent: false, double_sided: false,
-                colour_format: format, depth_format: None,
-            });
-            &*shader
-        } else {
-            let mut shader = Shader::from_resource(renderer, "pipelines/builtin/texture_mipmaps.ron").expect("Mipmap shader not present.");
-            shader.prepare_pipeline(renderer, PipelineProperties {
-                transparent: false, double_sided: false,
-                colour_format: format, depth_format: None,
-            });
-            resources.set_engine_global("texture::mipmap_pipeline", shader);
-            resources.get_engine_global::<Shader>("texture::mipmap_pipeline").expect("unreachable")
-        };
-
-        let mip_level_count = ((size.width as f32).log2().max((size.height as f32).log2()).ceil() as u32).max(1);
-
-        let dest_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label,
-            size,
-            mip_level_count,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        });
-
-        let dest_view = dest_texture.create_view(&wgpu::TextureViewDescriptor {
-            label,
-            mip_level_count: NonZeroU32::new(mip_level_count),
-            ..Default::default()
-        });
-
-        let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label,
-            layout: &shader.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&source_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&source_sampler),
-                },
-            ],
-        });
-
-        let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        
-        for i in 0..mip_level_count {
-            let mip_view = dest_texture.create_view(&wgpu::TextureViewDescriptor {
-                label,
-                base_mip_level: i,
-                mip_level_count: NonZeroU32::new(1),
-                ..Default::default()
-            });
-
-            {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &mip_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: true,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                });
-                render_pass.set_pipeline(shader.get_pipeline(PipelineProperties {
-                    transparent: false, double_sided: false,
-                    colour_format: format, depth_format: None,
-                }).unwrap());
-                render_pass.set_bind_group(0, &bind_group, &[]);
-                render_pass.draw(0..3, 0..1);
-            }
-        }
-
-        renderer.queue.submit(std::iter::once(encoder.finish()));
-
+        let dest_texture = Texture::generate_mipmaps(renderer, resources, source_texture, format, size);
+        let dest_view = dest_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let dest_view = resources.store(dest_view);
         
         Texture {
@@ -367,5 +278,100 @@ impl Texture {
 
     pub(crate) fn binding_resource(&self) -> BindingHolder {
         BindingHolder::Texture(self.view.clone())
+    }
+
+    pub(crate) fn generate_mipmaps(renderer: &Renderer, resources: &mut Resources, source_texture: wgpu::Texture, format: wgpu::TextureFormat, size: wgpu::Extent3d) -> wgpu::Texture {
+        let source_view = source_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let source_sampler = renderer.device.create_sampler(
+            &wgpu::SamplerDescriptor {
+                mag_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }
+        );
+        
+        let shader = if let Some(shader) = resources.get_engine_global_mut::<Shader>("texture::mipmap_pipeline") {
+            shader.prepare_pipeline(renderer, PipelineProperties {
+                transparent: false, double_sided: false,
+                colour_format: format, depth_format: None,
+            });
+            &*shader
+        } else {
+            let mut shader = Shader::from_resource(renderer, "pipelines/builtin/texture_mipmaps.ron").expect("Mipmap shader not present.");
+            shader.prepare_pipeline(renderer, PipelineProperties {
+                transparent: false, double_sided: false,
+                colour_format: format, depth_format: None,
+            });
+            resources.set_engine_global("texture::mipmap_pipeline", shader);
+            resources.get_engine_global::<Shader>("texture::mipmap_pipeline").expect("unreachable")
+        };
+
+        let mip_level_count = ((size.width as f32).log2().max((size.height as f32).log2()).ceil() as u32).max(1);
+
+        let dest_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size,
+            mip_level_count,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        });
+
+        // let dest_view = dest_texture.create_view(&wgpu::TextureViewDescriptor {
+        //     label: None,
+        //     mip_level_count: NonZeroU32::new(mip_level_count),
+        //     ..Default::default()
+        // });
+
+        let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &shader.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&source_sampler),
+                },
+            ],
+        });
+
+        let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        
+        for i in 0..mip_level_count {
+            let mip_view = dest_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: None,
+                base_mip_level: i,
+                mip_level_count: NonZeroU32::new(1),
+                ..Default::default()
+            });
+
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &mip_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                            store: true,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                });
+                render_pass.set_pipeline(shader.get_pipeline(PipelineProperties {
+                    transparent: false, double_sided: false,
+                    colour_format: format, depth_format: None,
+                }).unwrap());
+                render_pass.set_bind_group(0, &bind_group, &[]);
+                render_pass.draw(0..3, 0..1);
+            }
+        }
+
+        renderer.queue.submit(std::iter::once(encoder.finish()));
+        
+        dest_texture
     }
 }

@@ -5,6 +5,7 @@ struct CameraUniform {
     view_proj: mat4x4<f32>,
 };
 
+//!include("includes/colour_encodings.wgsl")
 //!include("includes/tonemapping.wgsl")
 
 //!binding()
@@ -51,9 +52,9 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     
     var colour = textureSample(skybox_texture, skybox_sampler, in.position).rgb;
 
-    // colour = colour / (colour + vec4(1.0));
-    colour = tonemap(colour);
-    // colour = pow(colour, vec4(1.0/2.2)); 
+    // colour = tonemap(srgb_to_linear(colour));
+    colour = tonemap(colour).rgb;
+    // colour = linear_to_srgb(colour);
 
     var out: FragmentOutput;
     

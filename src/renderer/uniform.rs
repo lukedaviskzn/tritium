@@ -7,7 +7,7 @@ use super::{Renderer, BindingHolder};
 // pub struct Uniform<T: bytemuck::Pod + bytemuck::Zeroable> {
 #[derive(Debug)]
 pub struct UniformBuffer {
-    buffer: Handle<wgpu::Buffer>,
+    pub(crate) buffer: Handle<wgpu::Buffer>,
 }
 
 impl UniformBuffer {
